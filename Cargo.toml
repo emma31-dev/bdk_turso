@@ -1,6 +1,29 @@
 [package]
 name = "bdk_turso"
 version = "0.1.0"
+authors = ["Bitcoin Dev Kit Developers"]
+rust-version = "1.88.0"
 edition = "2024"
+description = "Turso persistence backend for BDK"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
 
 [dependencies]
+bdk_chain = { version = "0.23.3", features = ["miniscript"] }
+bdk_wallet = { version = "3.0.0", optional = true }
+turso = { version = "0.8.3", default-features = false }
+
+[dev-dependencies]
+anyhow = "1"
+bdk_esplora = { version = "0.22.2", features = ["tokio"] }
+bdk_sqlite = "0.6.0"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+
+[features]
+default = ["wallet"]
+wallet = ["dep:bdk_wallet"]
+
+[[example]]
+name = "wallet"
+required-features = ["wallet"]

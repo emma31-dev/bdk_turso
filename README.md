@@ -9,13 +9,13 @@ An experimental persistence backend for `bdk_wallet` that stores wallet state in
 
 ## Project status
 
-`bdk_turso` is early-stage and experimental. The persistence implementation is not yet available, and its API may change.
+`bdk_turso` is early-stage and experimental. It currently implements async wallet persistence, and its API may change.
 
 ## What is bdk_turso?
 
-`bdk_turso` is a standalone persistence backend for [`bdk_wallet`](https://docs.rs/bdk_wallet), storing wallet state in [Turso](https://turso.tech/), an in-process, SQLite-compatible database written in Rust. It is intended to implement the `WalletPersister` and `AsyncWalletPersister` traits behind the `wallet` feature, without changes to `bdk_wallet` or `bdk_persist`.
+`bdk_turso` is a standalone persistence backend for [`bdk_wallet`](https://docs.rs/bdk_wallet), storing wallet state in [Turso](https://turso.tech/), an in-process, SQLite-compatible database written in Rust. It implements the `AsyncWalletPersister` trait behind the `wallet` feature, without changes to `bdk_wallet` or `bdk_persist`.
 
-The crate follows the storage-backend pattern used by [`bdk_sqlite`](https://docs.rs/bdk_sqlite) and [`bdk_redb`](https://docs.rs/bdk_redb). Unlike a synchronous backend adapted for async use, `bdk_turso` will use Turso's async-first API for native async persistence.
+`bdk_turso` is forked from [`bdk_sqlite`](https://docs.rs/bdk_sqlite), with its persistence implementation adapted for Turso's async-first API. Its persistence tests are adapted from the test suite in [`bdk_redb`](https://docs.rs/bdk_redb).
 
 ## Why Turso?
 
@@ -48,11 +48,11 @@ let wallet = Wallet::new_or_load(
 
 | Feature | Description |
 | --- | --- |
-| `wallet` | Enables the `WalletPersister` and `AsyncWalletPersister` implementations. |
+| `wallet` | Enables the `AsyncWalletPersister` implementation. |
 
 ## Minimum Supported Rust Version (MSRV)
 
-The MSRV is 1.85.0. This will be confirmed once the Turso dependency is added.
+The MSRV is 1.88.0, based on the current resolved dependency graph.
 
 ## License
 
