@@ -25,7 +25,7 @@ Turso's async-first design allows `bdk_turso` to implement `AsyncWalletPersister
 
 ### SQLite compatibility
 
-`bdk_turso` will stay within Turso's SQLite-compatible feature subset and avoid Turso-only extensions. Database files are intended to remain readable by `bdk_sqlite`.
+`bdk_turso` stays within Turso's SQLite-compatible feature subset and avoids Turso-only extensions. Unencrypted database files remain readable by `bdk_sqlite`; Turso-encrypted files require Turso to open.
 
 ## Usage
 

@@ -1,36 +1,109 @@
 //! [`Store`] provides async read and write methods for persisting BDK change sets with Turso.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use bdk_chain::{
     BlockId, ConfirmationBlockTime, DescriptorId, bitcoin, keychain_txout, local_chain, tx_graph,
 };
 use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxOut, Txid, consensus};
+pub use turso::EncryptionOpts;
 use turso::{Builder, Connection, Database, transaction::Transaction as DatabaseTransaction};
 
 use crate::Error;
+
+/// Experimental Turso features to enable when opening a store.
+#[derive(Clone, Default)]
+pub struct Options {
+    /// Enables Turso's experimental index-method support.
+    pub index_method: bool,
+    /// Enables opening the database from multiple processes.
+    pub multiprocess_wal: bool,
+    /// Enables the experimental `VACUUM` command.
+    pub vacuum: bool,
+    /// Enables `ATTACH DATABASE` and `DETACH DATABASE`.
+    pub attach: bool,
+    /// Enables generated columns.
+    pub generated_columns: bool,
+    /// Enables `WITHOUT ROWID` tables.
+    pub without_rowid: bool,
+    /// Enables the MVCC passive checkpoint option.
+    pub mvcc_passive_checkpoint: bool,
+    /// Enables encryption and supplies its cipher and key.
+    ///
+    /// Encrypted database files are not readable by SQLite-compatible backends.
+    pub encryption: Option<EncryptionOpts>,
+}
+
+impl fmt::Debug for Options {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Options")
+            .field("index_method", &self.index_method)
+            .field("multiprocess_wal", &self.multiprocess_wal)
+            .field("vacuum", &self.vacuum)
+            .field("attach", &self.attach)
+            .field("generated_columns", &self.generated_columns)
+            .field("without_rowid", &self.without_rowid)
+            .field("mvcc_passive_checkpoint", &self.mvcc_passive_checkpoint)
+            .field("encryption_enabled", &self.encryption.is_some())
+            .finish()
+    }
+}
 
 /// Store.
 #[derive(Debug, Clone)]
 pub struct Store {
     pub(crate) database: Database,
+    options: Options,
 }
 
 impl Store {
     /// Create a new in-memory store.
     pub async fn new_memory() -> Result<Self, Error> {
-        Self::new(":memory:").await
+        Self::new_memory_with_options(Options::default()).await
+    }
+
+    /// Create an in-memory store with experimental features enabled.
+    pub async fn new_memory_with_options(options: Options) -> Result<Self, Error> {
+        Self::new_with_options(":memory:", options).await
     }
 
     /// Create or open a store at the given local database path.
     pub async fn new(path: &str) -> Result<Self, Error> {
-        let database = Builder::new_local(path).build().await?;
-        Ok(Self { database })
+        Self::new_with_options(path, Options::default()).await
+    }
+
+    /// Create or open a store with experimental features enabled.
+    pub async fn new_with_options(path: &str, options: Options) -> Result<Self, Error> {
+        let mut builder = Builder::new_local(path)
+            .experimental_index_method(options.index_method)
+            .experimental_multiprocess_wal(options.multiprocess_wal)
+            .experimental_vacuum(options.vacuum)
+            .experimental_attach(options.attach)
+            .experimental_generated_columns(options.generated_columns)
+            .experimental_without_rowid(options.without_rowid)
+            .experimental_mvcc_passive_checkpoint(options.mvcc_passive_checkpoint);
+
+        if let Some(encryption) = &options.encryption {
+            builder = builder
+                .experimental_encryption(true)
+                .with_encryption(encryption.clone());
+        }
+
+        let database = builder.build().await?;
+        Ok(Self { database, options })
     }
 
     /// Create a store from an existing Turso database.
     pub fn from_database(database: Database) -> Self {
-        Self { database }
+        Self {
+            database,
+            options: Options::default(),
+        }
+    }
+
+    /// Returns the options used to open this store.
+    pub fn options(&self) -> &Options {
+        &self.options
     }
 
     pub(crate) fn connect(&self) -> Result<Connection, Error> {
