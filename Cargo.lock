@@ -278,6 +278,7 @@ dependencies = [
  "bdk_esplora",
  "bdk_sqlite",
  "bdk_wallet",
+ "branches",
  "tempfile",
  "tokio",
  "turso",
