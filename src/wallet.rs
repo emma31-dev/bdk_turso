@@ -1,4 +1,5 @@
-//! [`AsyncWalletPersister`] implementation for [`Store`].
+//! [`AsyncWalletPersister`] implementation for [`Store`], plus helpers for reading and writing
+//! the individual wallet changeset components.
 
 use std::{collections::BTreeMap, future::Future, pin::Pin, str::FromStr};
 
@@ -12,7 +13,11 @@ use turso::transaction::Transaction as DatabaseTransaction;
 use crate::{Error, Store};
 
 impl Store {
-    /// Write a wallet changeset.
+    /// Persist every component of a wallet changeset in one transaction.
+    ///
+    /// Network, descriptors, local-chain blocks, transaction-graph data, keychain scripts, and
+    /// locked outpoints are committed together. Run [`Store::migrate`] first, or initialize the
+    /// store through the async wallet persister, which migrates automatically.
     pub async fn write_changeset(&self, changeset: &ChangeSet) -> Result<(), Error> {
         let mut conn = self.connect()?;
         let txn = conn.transaction().await?;
@@ -39,7 +44,10 @@ impl Store {
         Ok(())
     }
 
-    /// Write the wallet network.
+    /// Insert the wallet network if the database does not already contain one.
+    ///
+    /// Existing network values are left unchanged. The caller owns `conn` and decides when to
+    /// commit or roll back the surrounding transaction.
     pub async fn write_network(
         conn: &DatabaseTransaction<'_>,
         network: Network,
@@ -52,7 +60,10 @@ impl Store {
         Ok(())
     }
 
-    /// Write keychain descriptors.
+    /// Insert descriptors for the external and internal keychains when they are absent.
+    ///
+    /// Existing descriptor rows are not replaced. The caller owns `conn` and decides when to
+    /// commit or roll back the surrounding transaction.
     pub async fn write_keychain_descriptors(
         conn: &DatabaseTransaction<'_>,
         descriptors: &BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>,
@@ -71,7 +82,11 @@ impl Store {
         Ok(())
     }
 
-    /// Read a wallet changeset.
+    /// Read the complete persisted wallet state as a `ChangeSet`.
+    ///
+    /// The read is performed in a transaction so its components are read from a consistent
+    /// database view. Empty tables produce empty changeset components; the schema must already be
+    /// migrated.
     pub async fn read_changeset(&self) -> Result<ChangeSet, Error> {
         let mut conn = self.connect()?;
         let txn = conn.transaction().await?;
@@ -97,7 +112,10 @@ impl Store {
         })
     }
 
-    /// Read the wallet network.
+    /// Read the stored wallet network, if one has been persisted.
+    ///
+    /// Returns `Ok(None)` when the network table is empty. The caller owns `conn` and controls the
+    /// surrounding transaction.
     pub async fn read_network(conn: &DatabaseTransaction<'_>) -> Result<Option<Network>, Error> {
         let mut rows = conn.query("SELECT network FROM network", ()).await?;
         rows.next()
@@ -106,7 +124,10 @@ impl Store {
             .transpose()
     }
 
-    /// Read keychain descriptors.
+    /// Read the persisted external and internal descriptors into a keychain-indexed map.
+    ///
+    /// An empty table produces an empty map. The caller owns `conn` and controls the surrounding
+    /// transaction.
     pub async fn read_keychain_descriptors(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>, Error> {
@@ -129,7 +150,10 @@ impl Store {
         Ok(descriptors)
     }
 
-    /// Write locked outpoints.
+    /// Apply locked-outpoint changes to the database.
+    ///
+    /// Entries marked `true` are inserted; entries marked `false` are removed. The caller owns
+    /// `conn` and decides when to commit or roll back the surrounding transaction.
     pub async fn write_locked_outpoints(
         conn: &DatabaseTransaction<'_>,
         locked_outpoints: &locked_outpoints::ChangeSet,
@@ -153,7 +177,11 @@ impl Store {
         Ok(())
     }
 
-    /// Read locked outpoints.
+    /// Read the outpoints currently recorded as locked.
+    ///
+    /// The returned changeset contains each stored outpoint with its value set to `true`; unlocked
+    /// outpoints are represented by their absence. The caller owns `conn` and controls the
+    /// surrounding transaction.
     pub async fn read_locked_outpoints(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<locked_outpoints::ChangeSet, Error> {

@@ -1,4 +1,7 @@
-//! [`Store`] provides async read and write methods for persisting BDK change sets with Turso.
+//! Async Turso storage for BDK wallet and chain changesets.
+//!
+//! [`Store`] owns a Turso database connection pool and exposes methods to migrate the schema and
+//! read or write persisted changesets.
 
 use std::{fmt, sync::Arc};
 
@@ -11,7 +14,10 @@ use turso::{Builder, Connection, Database, transaction::Transaction as DatabaseT
 
 use crate::Error;
 
-/// Experimental Turso features to enable when opening a store.
+/// Opt-in Turso features applied when opening a [`Store`].
+///
+/// All experimental features are disabled by default. Configure an `Options` value before opening
+/// the database; these settings cannot be changed on an already-open database.
 #[derive(Clone, Default)]
 pub struct Options {
     /// Enables Turso's experimental index-method support.
@@ -35,54 +41,79 @@ pub struct Options {
 }
 
 impl Options {
-    /// Create options with all experimental features disabled.
+    /// Create options with every experimental feature disabled.
+    ///
+    /// Enable only the capabilities needed by the application by chaining the relevant `with_*`
+    /// methods before passing the options to [`Store::new_with_options`] or
+    /// [`Store::new_memory_with_options`].
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Enable experimental index methods.
+    /// Enable Turso's experimental index-method support for the opened database.
+    ///
+    /// This setting must be enabled before opening the database and only affects databases opened
+    /// with the returned options.
     pub fn with_index_method(mut self) -> Self {
         self.index_method = true;
         self
     }
 
-    /// Enable multi-process WAL.
+    /// Enable multi-process access to the database through Turso's WAL coordinator.
+    ///
+    /// Use this only when the same database file must be shared between operating-system
+    /// processes; it is disabled by default.
     pub fn with_multiprocess_wal(mut self) -> Self {
         self.multiprocess_wal = true;
         self
     }
 
-    /// Enable experimental `VACUUM` support.
+    /// Enable Turso's experimental `VACUUM` support for the opened database.
+    ///
+    /// The option makes the command available; it does not run vacuuming automatically.
     pub fn with_vacuum(mut self) -> Self {
         self.vacuum = true;
         self
     }
 
-    /// Enable `ATTACH DATABASE` and `DETACH DATABASE`.
+    /// Enable SQL `ATTACH DATABASE` and `DETACH DATABASE` statements.
+    ///
+    /// This is disabled by default and is only applied when the database is opened.
     pub fn with_attach(mut self) -> Self {
         self.attach = true;
         self
     }
 
-    /// Enable generated columns.
+    /// Enable Turso's experimental generated-column support for SQL schemas.
+    ///
+    /// This setting does not alter the crate's wallet schema; it allows applications to use
+    /// generated columns in their own database operations.
     pub fn with_generated_columns(mut self) -> Self {
         self.generated_columns = true;
         self
     }
 
-    /// Enable `WITHOUT ROWID` tables.
+    /// Enable `WITHOUT ROWID` table definitions in the opened database.
+    ///
+    /// Enable this only if application SQL needs to create such tables.
     pub fn with_without_rowid(mut self) -> Self {
         self.without_rowid = true;
         self
     }
 
-    /// Enable MVCC passive checkpointing.
+    /// Enable Turso's experimental passive-checkpoint behavior for MVCC databases.
+    ///
+    /// This setting is opt-in and does not initiate a checkpoint by itself.
     pub fn with_mvcc_passive_checkpoint(mut self) -> Self {
         self.mvcc_passive_checkpoint = true;
         self
     }
 
-    /// Enable encryption with the provided cipher and key.
+    /// Configure at-rest encryption using Turso's cipher name and hexadecimal key.
+    ///
+    /// Encryption is enabled when this option is present. Keep the key secret and use the same
+    /// encryption settings whenever reopening the database. Encrypted files cannot be opened by
+    /// SQLite-compatible backends such as `bdk_sqlite`.
     pub fn with_encryption(mut self, encryption: EncryptionOpts) -> Self {
         self.encryption = Some(encryption);
         self
@@ -104,7 +135,11 @@ impl fmt::Debug for Options {
     }
 }
 
-/// Store.
+/// An asynchronous store for BDK wallet changesets backed by a local Turso database.
+///
+/// Use [`Store::new`] for a database with default settings, or [`Store::new_with_options`] to opt
+/// into Turso experimental features. Call [`Store::migrate`] before using the low-level read/write
+/// methods; initialization through `AsyncWalletPersister` performs migration automatically.
 #[derive(Debug, Clone)]
 pub struct Store {
     pub(crate) database: Database,
@@ -112,22 +147,50 @@ pub struct Store {
 }
 
 impl Store {
-    /// Create a new in-memory store.
+    /// Create an in-memory database with all experimental options disabled.
+    ///
+    /// The database exists for the lifetime of the returned store and is not persisted to a file.
+    /// Use [`Store::new_memory_with_options`] when an in-memory database needs experimental
+    /// features.
     pub async fn new_memory() -> Result<Self, Error> {
         Self::new_memory_with_options(Options::default()).await
     }
 
-    /// Create an in-memory store with experimental features enabled.
+    /// Create an in-memory database using the supplied experimental options.
+    ///
+    /// The options are applied while Turso opens the database. The database remains in memory for
+    /// the lifetime of the store and is not persisted to disk.
     pub async fn new_memory_with_options(options: Options) -> Result<Self, Error> {
         Self::new_with_options(":memory:", options).await
     }
 
-    /// Create or open a store at the given local database path.
+    /// Create or open a local database using default options.
+    ///
+    /// This constructor leaves all experimental options disabled. It does not create the BDK
+    /// schema; call [`Store::migrate`] before using the persistence methods, unless the store is
+    /// initialized through `AsyncWalletPersister`.
     pub async fn new(path: &str) -> Result<Self, Error> {
         Self::new_with_options(path, Options::default()).await
     }
 
-    /// Create or open a store with experimental features enabled.
+    /// Create or open a local database with the supplied Turso options.
+    ///
+    /// The options are applied only while opening the database. All experimental features remain
+    /// disabled unless explicitly enabled on `options`. This constructor does not run the BDK
+    /// schema migration; call [`Store::migrate`] before using the persistence methods.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use bdk_turso::{Options, Store};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let options = Options::new().with_attach().with_generated_columns();
+    /// let store = Store::new_with_options("wallet.sqlite", options).await?;
+    /// store.migrate().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn new_with_options(path: &str, options: Options) -> Result<Self, Error> {
         let mut builder = Builder::new_local(path)
             .experimental_index_method(options.index_method)
@@ -148,7 +211,11 @@ impl Store {
         Ok(Self { database, options })
     }
 
-    /// Create a store from an existing Turso database.
+    /// Wrap an already-open Turso database in a `Store`.
+    ///
+    /// This does not open a path or run the BDK schema migration. Call [`Store::migrate`] before
+    /// using persistence methods. Because the database was created externally, its opening options
+    /// are not inferred by the store.
     pub fn from_database(database: Database) -> Self {
         Self {
             database,
@@ -156,7 +223,12 @@ impl Store {
         }
     }
 
-    /// Returns the options used to open this store.
+    /// Return the options retained by this store.
+    ///
+    /// For stores created with [`Store::new_with_options`] or
+    /// [`Store::new_memory_with_options`], this is the configuration passed to Turso. For stores
+    /// wrapped with [`Store::from_database`], the original database settings are unknown and the
+    /// store retains default options.
     pub fn options(&self) -> &Options {
         &self.options
     }
@@ -165,7 +237,10 @@ impl Store {
         Ok(self.database.connect()?)
     }
 
-    /// Runs the schema migration against the database.
+    /// Apply the bundled BDK persistence schema in a transaction.
+    ///
+    /// This migration is safe to run repeatedly. It must be run before calling the low-level
+    /// changeset read/write methods directly; `AsyncWalletPersister::initialize` runs it for you.
     pub async fn migrate(&self) -> Result<(), Error> {
         let mut conn = self.connect()?;
         let txn = conn.transaction().await?;
@@ -175,7 +250,11 @@ impl Store {
         Ok(())
     }
 
-    /// Write tx_graph.
+    /// Write transaction-graph records using an existing database transaction.
+    ///
+    /// Persists transaction bytes, seen/evicted timestamps, transaction outputs, and confirmation
+    /// anchors. Existing transaction and output records are updated; duplicate anchors are
+    /// ignored. This helper does not commit `conn`, so the caller controls transaction completion.
     pub async fn write_tx_graph(
         conn: &DatabaseTransaction<'_>,
         tx_graph: &tx_graph::ChangeSet<ConfirmationBlockTime>,
@@ -243,7 +322,10 @@ impl Store {
         Ok(())
     }
 
-    /// Write local_chain.
+    /// Apply local-chain block changes using an existing database transaction.
+    ///
+    /// A block with a hash is inserted at its height if that height is not already present; a
+    /// block with no hash removes the row at that height. This helper does not commit `conn`.
     pub async fn write_local_chain(
         conn: &DatabaseTransaction<'_>,
         local_chain: &local_chain::ChangeSet,
@@ -267,7 +349,10 @@ impl Store {
         Ok(())
     }
 
-    /// Write keychain_txout.
+    /// Persist keychain reveal indices and cached scripts using an existing transaction.
+    ///
+    /// Reveal indices are updated when present in the changeset, while cached scripts are inserted
+    /// only if they do not already exist. This helper does not commit `conn`.
     pub async fn write_keychain_txout(
         conn: &DatabaseTransaction<'_>,
         keychain_txout: &keychain_txout::ChangeSet,
@@ -296,7 +381,10 @@ impl Store {
         Ok(())
     }
 
-    /// Read tx_graph.
+    /// Reconstruct transaction-graph changes from the database.
+    ///
+    /// Reads transactions, timestamps, outputs, and confirmation anchors visible through `conn`.
+    /// The caller owns the transaction and controls when it is completed.
     pub async fn read_tx_graph(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<tx_graph::ChangeSet<ConfirmationBlockTime>, Error> {
@@ -371,7 +459,10 @@ impl Store {
         Ok(changeset)
     }
 
-    /// Read local_chain.
+    /// Read all persisted local-chain blocks into a chain changeset.
+    ///
+    /// Each stored height and hash is returned as a block entry with a hash. The caller owns `conn`
+    /// and controls the surrounding transaction.
     pub async fn read_local_chain(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<local_chain::ChangeSet, Error> {
@@ -386,7 +477,10 @@ impl Store {
         Ok(changeset)
     }
 
-    /// Read keychain_txout.
+    /// Read persisted reveal indices and cached scripts into a keychain changeset.
+    ///
+    /// The returned changeset includes entries present in the database; an empty database yields
+    /// empty maps. The caller owns `conn` and controls the surrounding transaction.
     pub async fn read_keychain_txout(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<keychain_txout::ChangeSet, Error> {

@@ -5,20 +5,20 @@ use bdk_chain::bitcoin;
 use bdk_chain::miniscript;
 use bitcoin::{consensus, hex::error::HexToArrayError, network::ParseNetworkError};
 
-/// Crate error.
+/// Errors returned while encoding, decoding, parsing, or accessing persisted wallet data.
 #[derive(Debug)]
 pub enum Error {
-    /// `bitcoin` consensus encoding error.
+    /// A stored Bitcoin transaction could not be decoded from consensus encoding.
     Decode(consensus::encode::Error),
-    /// error converting an integer.
+    /// A database integer could not be represented by the expected Rust integer type.
     FromInt(TryFromIntError),
-    /// `bitcoin` hex to array error.
+    /// A hexadecimal value from persisted data could not be decoded into a fixed-size array.
     HexToArray(HexToArrayError),
-    /// `miniscript` error.
+    /// A persisted descriptor could not be parsed or validated by Miniscript.
     Miniscript(miniscript::Error),
-    /// parse `Network` error.
+    /// The stored network name could not be parsed as a Bitcoin network.
     ParseNetwork(ParseNetworkError),
-    /// Turso database error.
+    /// A Turso operation failed while opening, querying, or updating the database.
     Turso(turso::Error),
 }
 
