@@ -4,7 +4,7 @@ An experimental persistence backend for `bdk_wallet` that stores wallet state in
 
 [![Crate Info](https://img.shields.io/crates/v/bdk_turso.svg)](https://crates.io/crates/bdk_turso)
 [![Wallet API Docs](https://img.shields.io/badge/docs.rs-bdk_turso-green)](https://docs.rs/bdk_turso)
-[![CI Status](https://github.com/bitcoindevkit/bdk_turso/workflows/CI/badge.svg)](https://github.com/bitcoindevkit/bdk_turso/actions?query=workflow:CI)
+[![CI Status](https://github.com/bitcoindevkit/bdk_turso/workflows/CI/badge.svg)](https://github.com/emma31-dev/bdk_turso/actions?query=workflow:CI)
 [![MIT or Apache-2.0 Licensed](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
 
 ## Project status
