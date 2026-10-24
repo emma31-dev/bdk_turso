@@ -1,6 +1,6 @@
 [package]
 name = "bdk_turso"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Bitcoin Dev Kit Developers"]
 rust-version = "1.88.0"
 edition = "2024"
