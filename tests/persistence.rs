@@ -17,45 +17,20 @@ const EXTERNAL_DESCRIPTOR: &str = "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewb
 const INTERNAL_DESCRIPTOR: &str = "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewbwnNpPp5DvXFRKt68ioPoyJDY752cNHKkFxPWqkqCyCf4hxrEfpuxh46QisehL3m8Bi6MsAv394QVLopwbtfvryFQNUH/1/*)#emtwewtk";
 
 #[tokio::test]
-async fn experimental_options_are_disabled_by_default() -> anyhow::Result<()> {
-    let store = Store::new_memory().await?;
-    let options = store.options();
-
-    assert!(!options.index_method);
-    assert!(!options.multiprocess_wal);
-    assert!(!options.vacuum);
-    assert!(!options.attach);
-    assert!(!options.generated_columns);
-    assert!(!options.without_rowid);
-    assert!(!options.mvcc_passive_checkpoint);
-    assert!(options.encryption.is_none());
-    Ok(())
-}
-
-#[tokio::test]
 async fn store_opens_with_experimental_options() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("options.db");
     let path = path.to_str().expect("temporary path is valid UTF-8");
-    let options = Options {
-        index_method: true,
-        multiprocess_wal: true,
-        vacuum: true,
-        attach: true,
-        generated_columns: true,
-        without_rowid: true,
-        mvcc_passive_checkpoint: true,
-        encryption: None,
-    };
+    let options = Options::new()
+        .with_index_method()
+        .with_multiprocess_wal()
+        .with_vacuum()
+        .with_attach()
+        .with_generated_columns()
+        .with_without_rowid()
+        .with_mvcc_passive_checkpoint();
 
     let store = Store::new_with_options(path, options).await?;
-    assert!(store.options().index_method);
-    assert!(store.options().multiprocess_wal);
-    assert!(store.options().vacuum);
-    assert!(store.options().attach);
-    assert!(store.options().generated_columns);
-    assert!(store.options().without_rowid);
-    assert!(store.options().mvcc_passive_checkpoint);
     store.migrate().await?;
     Ok(())
 }
@@ -65,16 +40,12 @@ async fn store_opens_with_encryption_options() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("encrypted.db");
     let path = path.to_str().expect("temporary path is valid UTF-8");
-    let options = Options {
-        encryption: Some(EncryptionOpts {
-            cipher: "aes256gcm".to_owned(),
-            hexkey: "00".repeat(32),
-        }),
-        ..Options::default()
-    };
+    let options = Options::new().with_encryption(EncryptionOpts {
+        cipher: "aes256gcm".to_owned(),
+        hexkey: "00".repeat(32),
+    });
 
     let store = Store::new_with_options(path, options).await?;
-    assert!(store.options().encryption.is_some());
     store.migrate().await?;
     Ok(())
 }

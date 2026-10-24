@@ -15,23 +15,78 @@ use crate::Error;
 #[derive(Clone, Default)]
 pub struct Options {
     /// Enables Turso's experimental index-method support.
-    pub index_method: bool,
+    index_method: bool,
     /// Enables opening the database from multiple processes.
-    pub multiprocess_wal: bool,
+    multiprocess_wal: bool,
     /// Enables the experimental `VACUUM` command.
-    pub vacuum: bool,
+    vacuum: bool,
     /// Enables `ATTACH DATABASE` and `DETACH DATABASE`.
-    pub attach: bool,
+    attach: bool,
     /// Enables generated columns.
-    pub generated_columns: bool,
+    generated_columns: bool,
     /// Enables `WITHOUT ROWID` tables.
-    pub without_rowid: bool,
+    without_rowid: bool,
     /// Enables the MVCC passive checkpoint option.
-    pub mvcc_passive_checkpoint: bool,
+    mvcc_passive_checkpoint: bool,
     /// Enables encryption and supplies its cipher and key.
     ///
     /// Encrypted database files are not readable by SQLite-compatible backends.
-    pub encryption: Option<EncryptionOpts>,
+    encryption: Option<EncryptionOpts>,
+}
+
+impl Options {
+    /// Create options with all experimental features disabled.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable experimental index methods.
+    pub fn with_index_method(mut self) -> Self {
+        self.index_method = true;
+        self
+    }
+
+    /// Enable multi-process WAL.
+    pub fn with_multiprocess_wal(mut self) -> Self {
+        self.multiprocess_wal = true;
+        self
+    }
+
+    /// Enable experimental `VACUUM` support.
+    pub fn with_vacuum(mut self) -> Self {
+        self.vacuum = true;
+        self
+    }
+
+    /// Enable `ATTACH DATABASE` and `DETACH DATABASE`.
+    pub fn with_attach(mut self) -> Self {
+        self.attach = true;
+        self
+    }
+
+    /// Enable generated columns.
+    pub fn with_generated_columns(mut self) -> Self {
+        self.generated_columns = true;
+        self
+    }
+
+    /// Enable `WITHOUT ROWID` tables.
+    pub fn with_without_rowid(mut self) -> Self {
+        self.without_rowid = true;
+        self
+    }
+
+    /// Enable MVCC passive checkpointing.
+    pub fn with_mvcc_passive_checkpoint(mut self) -> Self {
+        self.mvcc_passive_checkpoint = true;
+        self
+    }
+
+    /// Enable encryption with the provided cipher and key.
+    pub fn with_encryption(mut self, encryption: EncryptionOpts) -> Self {
+        self.encryption = Some(encryption);
+        self
+    }
 }
 
 impl fmt::Debug for Options {
@@ -374,6 +429,20 @@ impl Store {
 mod test {
     use super::*;
     use bitcoin::hashes::Hash;
+
+    #[test]
+    fn options_default_to_disabled() {
+        let options = Options::new();
+
+        assert!(!options.index_method);
+        assert!(!options.multiprocess_wal);
+        assert!(!options.vacuum);
+        assert!(!options.attach);
+        assert!(!options.generated_columns);
+        assert!(!options.without_rowid);
+        assert!(!options.mvcc_passive_checkpoint);
+        assert!(options.encryption.is_none());
+    }
 
     #[tokio::test]
     async fn block_table_height_is_unique() -> anyhow::Result<()> {
