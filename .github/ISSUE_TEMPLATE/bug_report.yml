@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible problem in bdk_turso.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Do not include seed phrases, private keys, wallet database files, or other sensitive wallet data.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide a minimal example or the steps that reproduce the issue.
+      placeholder: |
+        1. Create a store...
+        2. Persist a changeset...
+        3. Observe the error...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: bdk_turso version
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include operating system and Rust toolchain version.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      render: text
+    validations:
+      required: false

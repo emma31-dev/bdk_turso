@@ -60,4 +60,4 @@ Licensed under either of [MIT](LICENSE-MIT) or [Apache License, Version 2.0](LIC
 
 ## Contribution
 
-Contributions are welcome. Please see the [BDK contributing guidelines](https://github.com/bitcoindevkit/bdk/blob/master/CONTRIBUTING.md) and [community standards](https://github.com/bitcoindevkit/bdk/community).
+Contributions are welcome. Please read the [contribution guide](CONTRIBUTING.md), the [BDK contributing guidelines](https://github.com/bitcoindevkit/bdk/blob/master/CONTRIBUTING.md), and the [BDK community standards](https://github.com/bitcoindevkit/bdk/community).

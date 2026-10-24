@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a change or improvement to bdk_turso.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open an issue to discuss a proposal before starting implementation. Search existing issues first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What need would this feature address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the behavior or API you are proposing.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+    validations:
+      required: false
