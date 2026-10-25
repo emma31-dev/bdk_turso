@@ -250,12 +250,22 @@ impl Store {
         Ok(())
     }
 
-    /// Write transaction-graph records using an existing database transaction.
+    /// Persist transaction-graph changes in a transaction owned by this store.
     ///
-    /// Persists transaction bytes, seen/evicted timestamps, transaction outputs, and confirmation
-    /// anchors. Existing transaction and output records are updated; duplicate anchors are
-    /// ignored. This helper does not commit `conn`, so the caller controls transaction completion.
+    /// Transactions, timestamps, outputs, and anchors are written together. For an atomic write of
+    /// the complete wallet state, use the wallet changeset persister instead.
     pub async fn write_tx_graph(
+        &self,
+        tx_graph: &tx_graph::ChangeSet<ConfirmationBlockTime>,
+    ) -> Result<(), Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        Self::write_tx_graph_in_transaction(&txn, tx_graph).await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn write_tx_graph_in_transaction(
         conn: &DatabaseTransaction<'_>,
         tx_graph: &tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), Error> {
@@ -322,11 +332,22 @@ impl Store {
         Ok(())
     }
 
-    /// Apply local-chain block changes using an existing database transaction.
+    /// Apply local-chain block changes in a transaction owned by this store.
     ///
-    /// A block with a hash is inserted at its height if that height is not already present; a
-    /// block with no hash removes the row at that height. This helper does not commit `conn`.
+    /// A block with a hash is inserted at its height if that height is not already present; a block
+    /// with no hash removes the row at that height.
     pub async fn write_local_chain(
+        &self,
+        local_chain: &local_chain::ChangeSet,
+    ) -> Result<(), Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        Self::write_local_chain_in_transaction(&txn, local_chain).await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn write_local_chain_in_transaction(
         conn: &DatabaseTransaction<'_>,
         local_chain: &local_chain::ChangeSet,
     ) -> Result<(), Error> {
@@ -349,11 +370,22 @@ impl Store {
         Ok(())
     }
 
-    /// Persist keychain reveal indices and cached scripts using an existing transaction.
+    /// Persist keychain reveal indices and cached scripts in a store-owned transaction.
     ///
-    /// Reveal indices are updated when present in the changeset, while cached scripts are inserted
-    /// only if they do not already exist. This helper does not commit `conn`.
+    /// Reveal indices are updated when present in the changeset; cached scripts are inserted only
+    /// when absent.
     pub async fn write_keychain_txout(
+        &self,
+        keychain_txout: &keychain_txout::ChangeSet,
+    ) -> Result<(), Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        Self::write_keychain_txout_in_transaction(&txn, keychain_txout).await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn write_keychain_txout_in_transaction(
         conn: &DatabaseTransaction<'_>,
         keychain_txout: &keychain_txout::ChangeSet,
     ) -> Result<(), Error> {
@@ -381,11 +413,18 @@ impl Store {
         Ok(())
     }
 
-    /// Reconstruct transaction-graph changes from the database.
+    /// Read transaction-graph changes through a transaction owned by this store.
     ///
-    /// Reads transactions, timestamps, outputs, and confirmation anchors visible through `conn`.
-    /// The caller owns the transaction and controls when it is completed.
-    pub async fn read_tx_graph(
+    /// Returns the persisted transactions, timestamps, outputs, and confirmation anchors.
+    pub async fn read_tx_graph(&self) -> Result<tx_graph::ChangeSet<ConfirmationBlockTime>, Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        let changeset = Self::read_tx_graph_in_transaction(&txn).await?;
+        txn.commit().await?;
+        Ok(changeset)
+    }
+
+    pub(crate) async fn read_tx_graph_in_transaction(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<tx_graph::ChangeSet<ConfirmationBlockTime>, Error> {
         let mut changeset = tx_graph::ChangeSet::default();
@@ -459,11 +498,18 @@ impl Store {
         Ok(changeset)
     }
 
-    /// Read all persisted local-chain blocks into a chain changeset.
+    /// Read persisted local-chain blocks through a transaction owned by this store.
     ///
-    /// Each stored height and hash is returned as a block entry with a hash. The caller owns `conn`
-    /// and controls the surrounding transaction.
-    pub async fn read_local_chain(
+    /// Each stored height and hash is returned as a block entry with a hash.
+    pub async fn read_local_chain(&self) -> Result<local_chain::ChangeSet, Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        let changeset = Self::read_local_chain_in_transaction(&txn).await?;
+        txn.commit().await?;
+        Ok(changeset)
+    }
+
+    pub(crate) async fn read_local_chain_in_transaction(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<local_chain::ChangeSet, Error> {
         let mut changeset = local_chain::ChangeSet::default();
@@ -477,11 +523,19 @@ impl Store {
         Ok(changeset)
     }
 
-    /// Read persisted reveal indices and cached scripts into a keychain changeset.
+    /// Read persisted reveal indices and cached scripts through a store-owned transaction.
     ///
     /// The returned changeset includes entries present in the database; an empty database yields
-    /// empty maps. The caller owns `conn` and controls the surrounding transaction.
-    pub async fn read_keychain_txout(
+    /// empty maps.
+    pub async fn read_keychain_txout(&self) -> Result<keychain_txout::ChangeSet, Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        let changeset = Self::read_keychain_txout_in_transaction(&txn).await?;
+        txn.commit().await?;
+        Ok(changeset)
+    }
+
+    pub(crate) async fn read_keychain_txout_in_transaction(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<keychain_txout::ChangeSet, Error> {
         let mut changeset = keychain_txout::ChangeSet::default();
@@ -546,17 +600,10 @@ mod test {
 
         let store = Store::new_memory().await?;
         store.migrate().await?;
-
-        let mut conn = store.connect()?;
-        let txn = conn.transaction().await?;
-        Store::write_local_chain(&txn, &changeset).await?;
-        txn.commit().await?;
+        store.write_local_chain(&changeset).await?;
 
         changeset.blocks.insert(1, Some(Hash::hash(b"1a")));
-        let mut conn = store.connect()?;
-        let txn = conn.transaction().await?;
-        Store::write_local_chain(&txn, &changeset).await?;
-        txn.commit().await?;
+        store.write_local_chain(&changeset).await?;
 
         let conn = store.connect()?;
         let mut rows = conn
@@ -569,16 +616,10 @@ mod test {
 
         let mut changeset = local_chain::ChangeSet::default();
         changeset.blocks.insert(1, None);
-        let mut conn = store.connect()?;
-        let txn = conn.transaction().await?;
-        Store::write_local_chain(&txn, &changeset).await?;
-        txn.commit().await?;
+        store.write_local_chain(&changeset).await?;
 
         changeset.blocks.insert(1, Some(Hash::hash(b"1a")));
-        let mut conn = store.connect()?;
-        let txn = conn.transaction().await?;
-        Store::write_local_chain(&txn, &changeset).await?;
-        txn.commit().await?;
+        store.write_local_chain(&changeset).await?;
 
         let conn = store.connect()?;
         let mut rows = conn

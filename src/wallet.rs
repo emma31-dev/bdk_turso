@@ -23,7 +23,7 @@ impl Store {
         let txn = conn.transaction().await?;
 
         if let Some(network) = changeset.network {
-            Self::write_network(&txn, network).await?;
+            Self::write_network_in_transaction(&txn, network).await?;
         }
 
         let mut descriptors = BTreeMap::new();
@@ -33,12 +33,12 @@ impl Store {
         if let Some(ref change_descriptor) = changeset.change_descriptor {
             descriptors.insert(KeychainKind::Internal, change_descriptor.clone());
         }
-        Self::write_keychain_descriptors(&txn, &descriptors).await?;
+        Self::write_keychain_descriptors_in_transaction(&txn, &descriptors).await?;
 
-        Self::write_local_chain(&txn, &changeset.local_chain).await?;
-        Self::write_tx_graph(&txn, &changeset.tx_graph).await?;
-        Self::write_keychain_txout(&txn, &changeset.indexer).await?;
-        Self::write_locked_outpoints(&txn, &changeset.locked_outpoints).await?;
+        Self::write_local_chain_in_transaction(&txn, &changeset.local_chain).await?;
+        Self::write_tx_graph_in_transaction(&txn, &changeset.tx_graph).await?;
+        Self::write_keychain_txout_in_transaction(&txn, &changeset.indexer).await?;
+        Self::write_locked_outpoints_in_transaction(&txn, &changeset.locked_outpoints).await?;
 
         txn.commit().await?;
         Ok(())
@@ -46,9 +46,18 @@ impl Store {
 
     /// Insert the wallet network if the database does not already contain one.
     ///
-    /// Existing network values are left unchanged. The caller owns `conn` and decides when to
-    /// commit or roll back the surrounding transaction.
-    pub async fn write_network(
+    /// Existing network values are left unchanged. This method opens and commits its own
+    /// transaction; use wallet changeset persistence when several state components must be written
+    /// atomically.
+    pub async fn write_network(&self, network: Network) -> Result<(), Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        Self::write_network_in_transaction(&txn, network).await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
+    async fn write_network_in_transaction(
         conn: &DatabaseTransaction<'_>,
         network: Network,
     ) -> Result<(), Error> {
@@ -62,9 +71,20 @@ impl Store {
 
     /// Insert descriptors for the external and internal keychains when they are absent.
     ///
-    /// Existing descriptor rows are not replaced. The caller owns `conn` and decides when to
-    /// commit or roll back the surrounding transaction.
+    /// Existing descriptor rows are not replaced. This method opens and commits its own
+    /// transaction; use wallet changeset persistence to update multiple state components atomically.
     pub async fn write_keychain_descriptors(
+        &self,
+        descriptors: &BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>,
+    ) -> Result<(), Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        Self::write_keychain_descriptors_in_transaction(&txn, descriptors).await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
+    async fn write_keychain_descriptors_in_transaction(
         conn: &DatabaseTransaction<'_>,
         descriptors: &BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), Error> {
@@ -91,14 +111,14 @@ impl Store {
         let mut conn = self.connect()?;
         let txn = conn.transaction().await?;
 
-        let network = Self::read_network(&txn).await?;
-        let descriptors = Self::read_keychain_descriptors(&txn).await?;
+        let network = Self::read_network_in_transaction(&txn).await?;
+        let descriptors = Self::read_keychain_descriptors_in_transaction(&txn).await?;
         let descriptor = descriptors.get(&KeychainKind::External).cloned();
         let change_descriptor = descriptors.get(&KeychainKind::Internal).cloned();
-        let tx_graph = Self::read_tx_graph(&txn).await?;
-        let local_chain = Self::read_local_chain(&txn).await?;
-        let indexer = Self::read_keychain_txout(&txn).await?;
-        let locked_outpoints = Self::read_locked_outpoints(&txn).await?;
+        let tx_graph = Self::read_tx_graph_in_transaction(&txn).await?;
+        let local_chain = Self::read_local_chain_in_transaction(&txn).await?;
+        let indexer = Self::read_keychain_txout_in_transaction(&txn).await?;
+        let locked_outpoints = Self::read_locked_outpoints_in_transaction(&txn).await?;
 
         txn.commit().await?;
         Ok(ChangeSet {
@@ -114,9 +134,19 @@ impl Store {
 
     /// Read the stored wallet network, if one has been persisted.
     ///
-    /// Returns `Ok(None)` when the network table is empty. The caller owns `conn` and controls the
-    /// surrounding transaction.
-    pub async fn read_network(conn: &DatabaseTransaction<'_>) -> Result<Option<Network>, Error> {
+    /// Returns `Ok(None)` when the network table is empty. This method opens and commits a read
+    /// transaction on the store.
+    pub async fn read_network(&self) -> Result<Option<Network>, Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        let network = Self::read_network_in_transaction(&txn).await?;
+        txn.commit().await?;
+        Ok(network)
+    }
+
+    async fn read_network_in_transaction(
+        conn: &DatabaseTransaction<'_>,
+    ) -> Result<Option<Network>, Error> {
         let mut rows = conn.query("SELECT network FROM network", ()).await?;
         rows.next()
             .await?
@@ -126,9 +156,19 @@ impl Store {
 
     /// Read the persisted external and internal descriptors into a keychain-indexed map.
     ///
-    /// An empty table produces an empty map. The caller owns `conn` and controls the surrounding
-    /// transaction.
+    /// An empty table produces an empty map. This method opens and commits a read transaction on
+    /// the store.
     pub async fn read_keychain_descriptors(
+        &self,
+    ) -> Result<BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>, Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        let descriptors = Self::read_keychain_descriptors_in_transaction(&txn).await?;
+        txn.commit().await?;
+        Ok(descriptors)
+    }
+
+    async fn read_keychain_descriptors_in_transaction(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>, Error> {
         let mut descriptors = BTreeMap::new();
@@ -150,11 +190,22 @@ impl Store {
         Ok(descriptors)
     }
 
-    /// Apply locked-outpoint changes to the database.
+    /// Apply locked-outpoint changes in a transaction owned by this store.
     ///
-    /// Entries marked `true` are inserted; entries marked `false` are removed. The caller owns
-    /// `conn` and decides when to commit or roll back the surrounding transaction.
+    /// Entries marked `true` are inserted; entries marked `false` are removed. Use wallet changeset
+    /// persistence when this update must be atomic with other wallet state.
     pub async fn write_locked_outpoints(
+        &self,
+        locked_outpoints: &locked_outpoints::ChangeSet,
+    ) -> Result<(), Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        Self::write_locked_outpoints_in_transaction(&txn, locked_outpoints).await?;
+        txn.commit().await?;
+        Ok(())
+    }
+
+    async fn write_locked_outpoints_in_transaction(
         conn: &DatabaseTransaction<'_>,
         locked_outpoints: &locked_outpoints::ChangeSet,
     ) -> Result<(), Error> {
@@ -180,9 +231,16 @@ impl Store {
     /// Read the outpoints currently recorded as locked.
     ///
     /// The returned changeset contains each stored outpoint with its value set to `true`; unlocked
-    /// outpoints are represented by their absence. The caller owns `conn` and controls the
-    /// surrounding transaction.
-    pub async fn read_locked_outpoints(
+    /// outpoints are represented by their absence. This method opens and commits a read transaction.
+    pub async fn read_locked_outpoints(&self) -> Result<locked_outpoints::ChangeSet, Error> {
+        let mut conn = self.connect()?;
+        let txn = conn.transaction().await?;
+        let locked_outpoints = Self::read_locked_outpoints_in_transaction(&txn).await?;
+        txn.commit().await?;
+        Ok(locked_outpoints)
+    }
+
+    async fn read_locked_outpoints_in_transaction(
         conn: &DatabaseTransaction<'_>,
     ) -> Result<locked_outpoints::ChangeSet, Error> {
         let mut changeset = locked_outpoints::ChangeSet::default();
@@ -233,11 +291,8 @@ mod test {
         let store = Store::new_memory().await?;
         store.migrate().await?;
 
-        let mut conn = store.connect()?;
-        let txn = conn.transaction().await?;
-        Store::write_network(&txn, Network::Bitcoin).await?;
-        Store::write_network(&txn, Network::Bitcoin).await?;
-        txn.commit().await?;
+        store.write_network(Network::Bitcoin).await?;
+        store.write_network(Network::Bitcoin).await?;
 
         let conn = store.connect()?;
         let mut rows = conn.query("SELECT COUNT(*) FROM network", ()).await?;
