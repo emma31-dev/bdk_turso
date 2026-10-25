@@ -2,6 +2,12 @@
 
 Notable changes to `bdk_turso` are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- `Store::options()` now returns `None` for stores created with `Store::from_database`, where the database's opening options are unknown. Store constructors retain their known options, including defaults.
+
 ## [0.2.3]
 
 ### Changed
