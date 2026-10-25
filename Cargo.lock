@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "bdk_turso"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "bdk_chain",
