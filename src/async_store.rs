@@ -143,7 +143,7 @@ impl fmt::Debug for Options {
 #[derive(Debug, Clone)]
 pub struct Store {
     pub(crate) database: Database,
-    options: Options,
+    options: Option<Options>,
 }
 
 impl Store {
@@ -208,7 +208,10 @@ impl Store {
         }
 
         let database = builder.build().await?;
-        Ok(Self { database, options })
+        Ok(Self {
+            database,
+            options: Some(options),
+        })
     }
 
     /// Wrap an already-open Turso database in a `Store`.
@@ -219,18 +222,18 @@ impl Store {
     pub fn from_database(database: Database) -> Self {
         Self {
             database,
-            options: Options::default(),
+            options: None,
         }
     }
 
-    /// Return the options retained by this store.
+    /// Return the options retained by this store, if they are known.
     ///
-    /// For stores created with [`Store::new_with_options`] or
-    /// [`Store::new_memory_with_options`], this is the configuration passed to Turso. For stores
-    /// wrapped with [`Store::from_database`], the original database settings are unknown and the
-    /// store retains default options.
-    pub fn options(&self) -> &Options {
-        &self.options
+    /// Stores created with [`Store::new`], [`Store::new_with_options`], [`Store::new_memory`], or
+    /// [`Store::new_memory_with_options`] retain the configuration passed to Turso. Stores wrapped
+    /// with [`Store::from_database`] return `None` because the database's original settings cannot
+    /// be inferred.
+    pub fn options(&self) -> Option<&Options> {
+        self.options.as_ref()
     }
 
     pub(crate) fn connect(&self) -> Result<Connection, Error> {
@@ -590,6 +593,16 @@ mod test {
         assert!(!options.without_rowid);
         assert!(!options.mvcc_passive_checkpoint);
         assert!(options.encryption.is_none());
+    }
+
+    #[tokio::test]
+    async fn wrapped_database_options_are_unknown() -> anyhow::Result<()> {
+        let store = Store::new_memory().await?;
+        assert!(store.options().is_some());
+
+        let wrapped = Store::from_database(store.database.clone());
+        assert!(wrapped.options().is_none());
+        Ok(())
     }
 
     #[tokio::test]
