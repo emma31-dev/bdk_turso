@@ -17,6 +17,7 @@ branches = { version = "0.4.6", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 anyhow = "1"
+bdk_bitcoind_rpc = "0.22.1"
 bdk_sqlite = "0.6.0"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
