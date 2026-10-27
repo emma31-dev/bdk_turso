@@ -147,6 +147,25 @@ async fn full_changeset_round_trips() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "psbt")]
+#[tokio::test]
+async fn psbt_round_trips_by_unsigned_txid() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    store.migrate().await?;
+    let psbt = bdk_wallet::bitcoin::Psbt::from_unsigned_tx((*transaction(30)).clone())?;
+    let txid = store.write_psbt(&psbt).await?;
+
+    assert_eq!(txid, psbt.unsigned_tx.compute_txid());
+    assert_eq!(store.read_psbt(txid).await?, Some(psbt));
+    assert!(
+        store
+            .read_psbt(Txid::from_byte_array([31; 32]))
+            .await?
+            .is_none()
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn incremental_changesets_merge_without_losing_entries() -> anyhow::Result<()> {
     let store = Store::new_memory().await?;
