@@ -17,7 +17,6 @@ branches = { version = "0.4.6", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 anyhow = "1"
-bdk_esplora = { version = "0.22.2", features = ["tokio"] }
 bdk_sqlite = "0.6.0"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
