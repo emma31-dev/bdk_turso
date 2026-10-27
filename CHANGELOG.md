@@ -4,6 +4,8 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+## [0.2.4]
+
 ### Added
 
 - Opt-in PSBT persistence keyed by the unsigned transaction ID; the transaction example now reloads and verifies its PSBT before signing and broadcasting. The PSBT table is migrated only with the `psbt` feature enabled.
