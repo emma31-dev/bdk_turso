@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS psbt (
+    unsigned_txid TEXT NOT NULL PRIMARY KEY,
+    data BLOB NOT NULL
+);

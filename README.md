@@ -44,11 +44,19 @@ let wallet = Wallet::new_or_load(
 )?;
 ```
 
+## Examples
+
+- `cargo run --example wallet` syncs a wallet with a local Bitcoin Core regtest node.
+- `cargo run --features psbt --example transaction` syncs a regtest wallet, stores and reloads an unsigned PSBT, confirms it matches, signs and broadcasts it, and persists the resulting wallet changeset. It requires `POLAR_RPC_USER`, `POLAR_RPC_PASS`, and a regtest `RECIPIENT_ADDRESS`. If the wallet has no spendable funds, it prints a receive address; fund it and mine 101 blocks before rerunning.
+
+Both examples requires Polar.
+
 ## Feature flags
 
 | Feature | Description |
 | --- | --- |
 | `wallet` | Enables the `AsyncWalletPersister` implementation. |
+| `psbt` | Enables optional PSBT storage methods; also enables `wallet`. |
 
 ## Minimum Supported Rust Version (MSRV)
 

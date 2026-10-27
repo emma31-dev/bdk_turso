@@ -16,6 +16,8 @@ pub enum Error {
     HexToArray(HexToArrayError),
     /// A persisted descriptor could not be parsed or validated by Miniscript.
     Miniscript(miniscript::Error),
+    /// A persisted PSBT could not be decoded.
+    Psbt(bitcoin::psbt::Error),
     /// The stored network name could not be parsed as a Bitcoin network.
     ParseNetwork(ParseNetworkError),
     /// A Turso operation failed while opening, querying, or updating the database.
@@ -29,6 +31,7 @@ impl fmt::Display for Error {
             Self::FromInt(e) => write!(f, "{e}"),
             Self::HexToArray(e) => write!(f, "{e}"),
             Self::Miniscript(e) => write!(f, "{e}"),
+            Self::Psbt(e) => write!(f, "{e}"),
             Self::ParseNetwork(e) => write!(f, "{e}"),
             Self::Turso(e) => write!(f, "{e}"),
         }
@@ -51,5 +54,6 @@ impl_error_from!(consensus::encode::Error, Decode);
 impl_error_from!(TryFromIntError, FromInt);
 impl_error_from!(HexToArrayError, HexToArray);
 impl_error_from!(miniscript::Error, Miniscript);
+impl_error_from!(bitcoin::psbt::Error, Psbt);
 impl_error_from!(ParseNetworkError, ParseNetwork);
 impl_error_from!(turso::Error, Turso);

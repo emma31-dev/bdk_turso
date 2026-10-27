@@ -249,6 +249,9 @@ impl Store {
         let txn = conn.transaction().await?;
         txn.execute_batch(include_str!("../migrations/0001_schema.up.sql"))
             .await?;
+        #[cfg(feature = "psbt")]
+        txn.execute_batch(include_str!("../migrations/0002_psbt.up.sql"))
+            .await?;
         txn.commit().await?;
         Ok(())
     }
@@ -602,6 +605,23 @@ mod test {
 
         let wrapped = Store::from_database(store.database.clone());
         assert!(wrapped.options().is_none());
+        Ok(())
+    }
+
+    #[cfg(not(feature = "psbt"))]
+    #[tokio::test]
+    async fn psbt_table_is_not_migrated_without_feature() -> anyhow::Result<()> {
+        let store = Store::new_memory().await?;
+        store.migrate().await?;
+
+        let conn = store.connect()?;
+        let mut rows = conn
+            .query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'psbt'",
+                (),
+            )
+            .await?;
+        assert!(rows.next().await?.is_none());
         Ok(())
     }
 

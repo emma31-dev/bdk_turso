@@ -4,6 +4,10 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in PSBT persistence keyed by the unsigned transaction ID; the transaction example now reloads and verifies its PSBT before signing and broadcasting. The PSBT table is migrated only with the `psbt` feature enabled.
+
 ### Changed
 
 - `Store::options()` now returns `None` for stores created with `Store::from_database`, where the database's opening options are unknown. Store constructors retain their known options, including defaults.
