@@ -134,17 +134,60 @@ fn full_changeset(seed: u8) -> ChangeSet {
     }
 }
 
+async fn assert_persist_changesets(store: &Store, changesets: &[ChangeSet]) -> anyhow::Result<()> {
+    store.migrate().await?;
+
+    let mut expected = ChangeSet::default();
+    assert_eq!(store.read_changeset().await?, expected);
+    for changeset in changesets {
+        store.write_changeset(changeset).await?;
+        expected.merge(changeset.clone());
+        assert_eq!(store.read_changeset().await?, expected);
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn full_changeset_round_trips() -> anyhow::Result<()> {
     let store = Store::new_memory().await?;
-    store.migrate().await?;
-    store.migrate().await?;
 
-    let expected = full_changeset(1);
-    store.write_changeset(&expected).await?;
+    assert_persist_changesets(&store, &[full_changeset(1)]).await
+}
 
-    assert_eq!(store.read_changeset().await?, expected);
-    Ok(())
+#[tokio::test]
+async fn network_changeset_round_trips() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    let changeset = ChangeSet {
+        network: Some(Network::Bitcoin),
+        ..ChangeSet::default()
+    };
+
+    assert_persist_changesets(&store, &[changeset]).await
+}
+
+#[tokio::test]
+async fn keychain_changeset_round_trips() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    let (descriptor, change_descriptor) = descriptors();
+    let changeset = ChangeSet {
+        descriptor: Some(descriptor),
+        change_descriptor: Some(change_descriptor),
+        ..ChangeSet::default()
+    };
+
+    assert_persist_changesets(&store, &[changeset]).await
+}
+
+#[tokio::test]
+async fn single_keychain_changeset_round_trips() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    let (descriptor, _) = descriptors();
+    let changeset = ChangeSet {
+        descriptor: Some(descriptor),
+        ..ChangeSet::default()
+    };
+
+    assert_persist_changesets(&store, &[changeset]).await
 }
 
 #[cfg(feature = "psbt")]
@@ -169,8 +212,6 @@ async fn psbt_round_trips_by_unsigned_txid() -> anyhow::Result<()> {
 #[tokio::test]
 async fn incremental_changesets_merge_without_losing_entries() -> anyhow::Result<()> {
     let store = Store::new_memory().await?;
-    store.migrate().await?;
-
     let initial = full_changeset(2);
     let (external, _) = descriptors();
     let external_id = external.descriptor_id();
@@ -194,13 +235,7 @@ async fn incremental_changesets_merge_without_losing_entries() -> anyhow::Result
         .outpoints
         .insert(OutPoint::new(new_txid, 0), true);
 
-    let mut expected = initial.clone();
-    expected.merge(next.clone());
-    store.write_changeset(&initial).await?;
-    store.write_changeset(&next).await?;
-
-    assert_eq!(store.read_changeset().await?, expected);
-    Ok(())
+    assert_persist_changesets(&store, &[initial, next]).await
 }
 
 #[tokio::test]
