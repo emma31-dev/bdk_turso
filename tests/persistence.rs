@@ -50,6 +50,31 @@ async fn store_opens_with_encryption_options() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn encrypted_file_is_not_readable_by_bdk_sqlite() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("encrypted.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let options = Options::new().with_encryption(EncryptionOpts {
+        cipher: "aes256gcm".to_owned(),
+        hexkey: "00".repeat(32),
+    });
+    let expected = full_changeset(21);
+
+    let store = Store::new_with_options(path, options).await?;
+    store.migrate().await?;
+    store.write_changeset(&expected).await?;
+    drop(store);
+
+    if let Ok(sqlite_store) = bdk_sqlite::Store::new(path).await {
+        assert!(
+            sqlite_store.read_changeset().await.is_err(),
+            "bdk_sqlite unexpectedly read an encrypted Turso database"
+        );
+    }
+    Ok(())
+}
+
 fn descriptors() -> (
     Descriptor<DescriptorPublicKey>,
     Descriptor<DescriptorPublicKey>,
