@@ -51,12 +51,30 @@ let wallet = Wallet::new_or_load(
 
 Both examples requires Polar.
 
+## Remote Turso
+
+Enable the `remote` feature to connect to Turso Cloud through Turso's local sync engine. The store keeps a local cache at the supplied path, pulls remote changes before reads, and pushes committed writes. A push can fail after the local commit, in which case the local cache retains the change and the persistence operation returns an error; retry the same changeset to retry the upload. The cache is not encrypted by Turso Cloud encryption; configure `Options::with_remote_encryption` for Turso Cloud database encryption and protect the local cache separately.
+
+```rust,ignore
+use bdk_turso::Store;
+
+let store = Store::new_remote(
+    "wallet-cache.db",
+    &remote_url,
+    &auth_token,
+).await?;
+store.migrate().await?;
+```
+
+Local at-rest encryption and MVCC passive checkpointing are not supported by Turso's remote sync builder and return an error if requested. The ignored remote integration test requires a disposable, empty Turso database and the `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` environment variables; run it with `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.
+
 ## Feature flags
 
 | Feature | Description |
 | --- | --- |
 | `wallet` | Enables the `AsyncWalletPersister` implementation. |
 | `psbt` | Enables optional PSBT storage methods; also enables `wallet`. |
+| `remote` | Enables Turso Cloud sync with a local cache. |
 
 ## Minimum Supported Rust Version (MSRV)
 

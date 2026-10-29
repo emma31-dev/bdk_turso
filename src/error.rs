@@ -20,6 +20,9 @@ pub enum Error {
     Psbt(bitcoin::psbt::Error),
     /// The stored network name could not be parsed as a Bitcoin network.
     ParseNetwork(ParseNetworkError),
+    /// A requested database option is unsupported for the selected store type.
+    #[cfg(feature = "remote")]
+    UnsupportedOption(String),
     /// A Turso operation failed while opening, querying, or updating the database.
     Turso(turso::Error),
 }
@@ -33,6 +36,8 @@ impl fmt::Display for Error {
             Self::Miniscript(e) => write!(f, "{e}"),
             Self::Psbt(e) => write!(f, "{e}"),
             Self::ParseNetwork(e) => write!(f, "{e}"),
+            #[cfg(feature = "remote")]
+            Self::UnsupportedOption(message) => write!(f, "{message}"),
             Self::Turso(e) => write!(f, "{e}"),
         }
     }
