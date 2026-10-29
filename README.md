@@ -70,10 +70,12 @@ Local at-rest encryption and MVCC passive checkpointing are not supported by Tur
 
 ## Feature flags
 
+`Store::migrate()` always creates the core block and transaction tables. Wallet-specific and PSBT tables are created only when their respective features are enabled.
+
 | Feature | Description |
 | --- | --- |
-| `wallet` | Enables the `AsyncWalletPersister` implementation. |
-| `psbt` | Enables optional PSBT storage methods; also enables `wallet`. |
+| `wallet` | Enables wallet-specific tables and the `AsyncWalletPersister` implementation. |
+| `psbt` | Enables the PSBT table and storage methods; independent of `wallet`. |
 | `remote` | Enables Turso Cloud sync with a local cache. |
 
 ## Minimum Supported Rust Version (MSRV)

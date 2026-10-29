@@ -1,3 +1,5 @@
+#![cfg(feature = "wallet")]
+
 use std::sync::Arc;
 
 use bdk_chain::{

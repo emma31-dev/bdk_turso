@@ -392,17 +392,21 @@ impl Store {
         }
     }
 
-    /// Apply the bundled BDK persistence schema in a transaction.
+    /// Apply the default schema and schemas for enabled features in a transaction.
     ///
-    /// This migration is safe to run repeatedly. It must be run before calling the low-level
-    /// changeset read/write methods directly; `AsyncWalletPersister::initialize` runs it for you.
+    /// Core chain and transaction tables are always created. Wallet-specific tables are created
+    /// only with the `wallet` feature, and the PSBT table only with `psbt`. This migration is safe
+    /// to run repeatedly; `AsyncWalletPersister::initialize` runs it for you when enabled.
     pub async fn migrate(&self) -> Result<(), Error> {
         let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
-        txn.execute_batch(include_str!("../migrations/0001_schema.up.sql"))
+        txn.execute_batch(include_str!("../migrations/0001_default_schema.up.sql"))
+            .await?;
+        #[cfg(feature = "wallet")]
+        txn.execute_batch(include_str!("../migrations/0002_wallet_schema.up.sql"))
             .await?;
         #[cfg(feature = "psbt")]
-        txn.execute_batch(include_str!("../migrations/0002_psbt.up.sql"))
+        txn.execute_batch(include_str!("../migrations/0003_psbt.up.sql"))
             .await?;
         txn.commit().await?;
         drop(conn);
@@ -737,6 +741,52 @@ impl Store {
 
         Ok(changeset)
     }
+
+    /// Store a PSBT under the txid of its unsigned transaction.
+    ///
+    /// Writing another PSBT with the same unsigned transaction ID replaces the previous one. The
+    /// complete PSBT, including signing metadata, is serialized. Run [`Store::migrate`] first.
+    #[cfg(feature = "psbt")]
+    pub async fn write_psbt(&self, psbt: &bitcoin::Psbt) -> Result<bitcoin::Txid, Error> {
+        let txid = psbt.unsigned_tx.compute_txid();
+        let mut conn = self.connect().await?;
+        let txn = conn.transaction().await?;
+        txn.execute(
+            "INSERT INTO psbt(unsigned_txid, data) VALUES(?1, ?2) ON CONFLICT(unsigned_txid) DO UPDATE SET data = ?2",
+            (txid.to_string(), psbt.serialize()),
+        )
+        .await?;
+        txn.commit().await?;
+        drop(conn);
+        self.push().await?;
+        Ok(txid)
+    }
+
+    /// Load the PSBT stored for an unsigned transaction ID.
+    ///
+    /// Returns `Ok(None)` when no PSBT is stored for `txid`. This method opens and commits its own
+    /// read transaction. Run [`Store::migrate`] first.
+    #[cfg(feature = "psbt")]
+    pub async fn read_psbt(&self, txid: bitcoin::Txid) -> Result<Option<bitcoin::Psbt>, Error> {
+        let mut conn = self.connect().await?;
+        let txn = conn.transaction().await?;
+        let mut rows = txn
+            .query(
+                "SELECT data FROM psbt WHERE unsigned_txid = ?1",
+                [txid.to_string()],
+            )
+            .await?;
+        let data = rows
+            .next()
+            .await?
+            .map(|row| row.get::<Vec<u8>>(0))
+            .transpose()?;
+        let psbt = data
+            .map(|data| bitcoin::Psbt::deserialize(&data))
+            .transpose()?;
+        txn.commit().await?;
+        Ok(psbt)
+    }
 }
 
 #[cfg(test)]
@@ -813,20 +863,35 @@ mod test {
         Ok(())
     }
 
-    #[cfg(not(feature = "psbt"))]
     #[tokio::test]
-    async fn psbt_table_is_not_migrated_without_feature() -> anyhow::Result<()> {
+    async fn migrate_creates_default_and_feature_enabled_schemas() -> anyhow::Result<()> {
         let store = Store::new_memory().await?;
         store.migrate().await?;
 
         let conn = store.connect().await?;
         let mut rows = conn
             .query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'block'",
+                (),
+            )
+            .await?;
+        assert!(rows.next().await?.is_some());
+
+        let mut rows = conn
+            .query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'network'",
+                (),
+            )
+            .await?;
+        assert_eq!(rows.next().await?.is_some(), cfg!(feature = "wallet"));
+
+        let mut rows = conn
+            .query(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'psbt'",
                 (),
             )
             .await?;
-        assert!(rows.next().await?.is_none());
+        assert_eq!(rows.next().await?.is_some(), cfg!(feature = "psbt"));
         Ok(())
     }
 

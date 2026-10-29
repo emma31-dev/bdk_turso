@@ -236,52 +236,6 @@ impl Store {
         Ok(())
     }
 
-    /// Store a PSBT under the txid of its unsigned transaction.
-    ///
-    /// Writing another PSBT with the same unsigned transaction ID replaces the previous one. The
-    /// complete PSBT, including signing metadata, is serialized. Run [`Store::migrate`] first.
-    #[cfg(feature = "psbt")]
-    pub async fn write_psbt(&self, psbt: &bitcoin::Psbt) -> Result<bitcoin::Txid, Error> {
-        let txid = psbt.unsigned_tx.compute_txid();
-        let mut conn = self.connect().await?;
-        let txn = conn.transaction().await?;
-        txn.execute(
-            "INSERT INTO psbt(unsigned_txid, data) VALUES(?1, ?2) ON CONFLICT(unsigned_txid) DO UPDATE SET data = ?2",
-            (txid.to_string(), psbt.serialize()),
-        )
-        .await?;
-        txn.commit().await?;
-        drop(conn);
-        self.push().await?;
-        Ok(txid)
-    }
-
-    /// Load the PSBT stored for an unsigned transaction ID.
-    ///
-    /// Returns `Ok(None)` when no PSBT is stored for `txid`. This method opens and commits its own
-    /// read transaction. Run [`Store::migrate`] first.
-    #[cfg(feature = "psbt")]
-    pub async fn read_psbt(&self, txid: bitcoin::Txid) -> Result<Option<bitcoin::Psbt>, Error> {
-        let mut conn = self.connect().await?;
-        let txn = conn.transaction().await?;
-        let mut rows = txn
-            .query(
-                "SELECT data FROM psbt WHERE unsigned_txid = ?1",
-                [txid.to_string()],
-            )
-            .await?;
-        let data = rows
-            .next()
-            .await?
-            .map(|row| row.get::<Vec<u8>>(0))
-            .transpose()?;
-        let psbt = data
-            .map(|data| bitcoin::Psbt::deserialize(&data))
-            .transpose()?;
-        txn.commit().await?;
-        Ok(psbt)
-    }
-
     /// Read the outpoints currently recorded as locked.
     ///
     /// The returned changeset contains each stored outpoint with its value set to `true`; unlocked

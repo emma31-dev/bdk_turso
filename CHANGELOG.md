@@ -11,6 +11,7 @@ Notable changes to `bdk_turso` are documented here.
 ### Changed
 
 - `Store` now represents its database as an enum to support local and remote backends.
+- `psbt` is independent of `wallet`; migrations always create the core chain and transaction tables, while wallet-specific and PSBT tables are created only when their respective features are enabled.
 
 ## [0.2.4]
 

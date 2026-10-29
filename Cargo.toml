@@ -25,7 +25,7 @@ tokio = { version = "1", features = ["full"] }
 [features]
 default = ["wallet"]
 wallet = ["dep:bdk_wallet"]
-psbt = ["wallet"]
+psbt = []
 remote = ["turso/sync"]
 
 [[example]]
@@ -34,4 +34,4 @@ required-features = ["wallet"]
 
 [[example]]
 name = "transaction"
-required-features = ["psbt"]
+required-features = ["wallet", "psbt"]
