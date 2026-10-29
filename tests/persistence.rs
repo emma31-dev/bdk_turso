@@ -77,7 +77,7 @@ async fn encrypted_file_is_not_readable_by_bdk_sqlite() -> anyhow::Result<()> {
 
 #[cfg(feature = "remote")]
 #[tokio::test]
-#[ignore = "requires a disposable Turso Cloud database and credentials"]
+#[ignore = "requires a disposable Turso sync endpoint and credentials"]
 async fn remote_store_syncs_changesets_between_local_caches() -> anyhow::Result<()> {
     let remote_url = std::env::var("BDK_TURSO_REMOTE_URL")?;
     let auth_token = std::env::var("BDK_TURSO_AUTH_TOKEN")?;

@@ -66,7 +66,7 @@ let store = Store::new_remote(
 store.migrate().await?;
 ```
 
-Local at-rest encryption and MVCC passive checkpointing are not supported by Turso's remote sync builder and return an error if requested. The ignored remote integration test requires a disposable, empty Turso database and the `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` environment variables; run it with `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.
+Local at-rest encryption and MVCC passive checkpointing are not supported by Turso's remote sync builder and return an error if requested. The ignored sync integration test can target a disposable Turso Cloud database or a local Turso sync server. Set `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` to the endpoint and token accepted by that server, then run `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.
 
 ## Feature flags
 
