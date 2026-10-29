@@ -19,7 +19,7 @@ impl Store {
     /// locked outpoints are committed together. Run [`Store::migrate`] first, or initialize the
     /// store through the async wallet persister, which migrates automatically.
     pub async fn write_changeset(&self, changeset: &ChangeSet) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
 
         if let Some(network) = changeset.network {
@@ -41,6 +41,8 @@ impl Store {
         Self::write_locked_outpoints_in_transaction(&txn, &changeset.locked_outpoints).await?;
 
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -50,10 +52,12 @@ impl Store {
     /// transaction; use wallet changeset persistence when several state components must be written
     /// atomically.
     pub async fn write_network(&self, network: Network) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         Self::write_network_in_transaction(&txn, network).await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -77,10 +81,12 @@ impl Store {
         &self,
         descriptors: &BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>,
     ) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         Self::write_keychain_descriptors_in_transaction(&txn, descriptors).await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -108,7 +114,7 @@ impl Store {
     /// database view. Empty tables produce empty changeset components; the schema must already be
     /// migrated.
     pub async fn read_changeset(&self) -> Result<ChangeSet, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
 
         let network = Self::read_network_in_transaction(&txn).await?;
@@ -137,7 +143,7 @@ impl Store {
     /// Returns `Ok(None)` when the network table is empty. This method opens and commits a read
     /// transaction on the store.
     pub async fn read_network(&self) -> Result<Option<Network>, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let network = Self::read_network_in_transaction(&txn).await?;
         txn.commit().await?;
@@ -161,7 +167,7 @@ impl Store {
     pub async fn read_keychain_descriptors(
         &self,
     ) -> Result<BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let descriptors = Self::read_keychain_descriptors_in_transaction(&txn).await?;
         txn.commit().await?;
@@ -198,10 +204,12 @@ impl Store {
         &self,
         locked_outpoints: &locked_outpoints::ChangeSet,
     ) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         Self::write_locked_outpoints_in_transaction(&txn, locked_outpoints).await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -235,7 +243,7 @@ impl Store {
     #[cfg(feature = "psbt")]
     pub async fn write_psbt(&self, psbt: &bitcoin::Psbt) -> Result<bitcoin::Txid, Error> {
         let txid = psbt.unsigned_tx.compute_txid();
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         txn.execute(
             "INSERT INTO psbt(unsigned_txid, data) VALUES(?1, ?2) ON CONFLICT(unsigned_txid) DO UPDATE SET data = ?2",
@@ -243,6 +251,8 @@ impl Store {
         )
         .await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(txid)
     }
 
@@ -252,7 +262,7 @@ impl Store {
     /// read transaction. Run [`Store::migrate`] first.
     #[cfg(feature = "psbt")]
     pub async fn read_psbt(&self, txid: bitcoin::Txid) -> Result<Option<bitcoin::Psbt>, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let mut rows = txn
             .query(
@@ -277,7 +287,7 @@ impl Store {
     /// The returned changeset contains each stored outpoint with its value set to `true`; unlocked
     /// outpoints are represented by their absence. This method opens and commits a read transaction.
     pub async fn read_locked_outpoints(&self) -> Result<locked_outpoints::ChangeSet, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let locked_outpoints = Self::read_locked_outpoints_in_transaction(&txn).await?;
         txn.commit().await?;
@@ -338,7 +348,7 @@ mod test {
         store.write_network(Network::Bitcoin).await?;
         store.write_network(Network::Bitcoin).await?;
 
-        let conn = store.connect()?;
+        let conn = store.connect().await?;
         let mut rows = conn.query("SELECT COUNT(*) FROM network", ()).await?;
         let row = rows.next().await?.expect("expected count row");
         let count: i64 = row.get(0)?;

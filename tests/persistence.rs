@@ -75,6 +75,30 @@ async fn encrypted_file_is_not_readable_by_bdk_sqlite() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "remote")]
+#[tokio::test]
+#[ignore = "requires a disposable Turso sync endpoint and credentials"]
+async fn remote_store_syncs_changesets_between_local_caches() -> anyhow::Result<()> {
+    let remote_url = std::env::var("BDK_TURSO_REMOTE_URL")?;
+    let auth_token = std::env::var("BDK_TURSO_AUTH_TOKEN")?;
+    let expected = full_changeset(22);
+
+    let first_dir = tempfile::tempdir()?;
+    let first_path = first_dir.path().join("first-cache.db");
+    let first_path = first_path.to_str().expect("temporary path is valid UTF-8");
+    let first = Store::new_remote(first_path, &remote_url, &auth_token).await?;
+    first.migrate().await?;
+    first.write_changeset(&expected).await?;
+    drop(first);
+
+    let second_dir = tempfile::tempdir()?;
+    let second_path = second_dir.path().join("second-cache.db");
+    let second_path = second_path.to_str().expect("temporary path is valid UTF-8");
+    let second = Store::new_remote(second_path, &remote_url, &auth_token).await?;
+    assert_eq!(second.read_changeset().await?, expected);
+    Ok(())
+}
+
 fn descriptors() -> (
     Descriptor<DescriptorPublicKey>,
     Descriptor<DescriptorPublicKey>,

@@ -10,7 +10,11 @@ use bdk_chain::{
 };
 use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxOut, Txid, consensus};
 pub use turso::EncryptionOpts;
-use turso::{Builder, Connection, Database, transaction::Transaction as DatabaseTransaction};
+#[cfg(feature = "remote")]
+pub use turso::sync::RemoteEncryptionCipher;
+use turso::{
+    Builder, Connection, Database as LocalDatabase, transaction::Transaction as DatabaseTransaction,
+};
 
 use crate::Error;
 
@@ -34,18 +38,18 @@ pub struct Options {
     without_rowid: bool,
     /// Enables the MVCC passive checkpoint option.
     mvcc_passive_checkpoint: bool,
-    /// Enables encryption and supplies its cipher and key.
-    ///
-    /// Encrypted database files are not readable by SQLite-compatible backends.
+    /// Enables local at-rest encryption and supplies its cipher and key.
     encryption: Option<EncryptionOpts>,
+    #[cfg(feature = "remote")]
+    /// Enables Turso Cloud encryption; this does not encrypt the local sync cache.
+    remote_encryption: Option<(String, RemoteEncryptionCipher)>,
 }
 
 impl Options {
     /// Create options with every experimental feature disabled.
     ///
     /// Enable only the capabilities needed by the application by chaining the relevant `with_*`
-    /// methods before passing the options to [`Store::new_with_options`] or
-    /// [`Store::new_memory_with_options`].
+    /// methods before passing the options to a store constructor.
     pub fn new() -> Self {
         Self::default()
     }
@@ -109,13 +113,28 @@ impl Options {
         self
     }
 
-    /// Configure at-rest encryption using Turso's cipher name and hexadecimal key.
+    /// Configure local at-rest encryption using Turso's cipher name and hexadecimal key.
     ///
-    /// Encryption is enabled when this option is present. Keep the key secret and use the same
-    /// encryption settings whenever reopening the database. Encrypted files cannot be opened by
-    /// SQLite-compatible backends such as `bdk_sqlite`.
+    /// Keep the key secret and use the same settings whenever reopening the database. Encrypted
+    /// local files cannot be opened by SQLite-compatible backends. Remote sync stores cannot use
+    /// local at-rest encryption; use `with_remote_encryption` for Turso Cloud encryption instead.
+    /// Cloud encryption does not encrypt the local sync cache.
     pub fn with_encryption(mut self, encryption: EncryptionOpts) -> Self {
         self.encryption = Some(encryption);
+        self
+    }
+
+    /// Configure Turso Cloud encryption with a base64-encoded key and cipher.
+    ///
+    /// This setting is available with the `remote` feature and only applies to remote stores. It
+    /// enables Turso Cloud database encryption; the local sync cache remains unencrypted.
+    #[cfg(feature = "remote")]
+    pub fn with_remote_encryption(
+        mut self,
+        base64_key: impl Into<String>,
+        cipher: RemoteEncryptionCipher,
+    ) -> Self {
+        self.remote_encryption = Some((base64_key.into(), cipher));
         self
     }
 }
@@ -131,19 +150,52 @@ impl fmt::Debug for Options {
             .field("without_rowid", &self.without_rowid)
             .field("mvcc_passive_checkpoint", &self.mvcc_passive_checkpoint)
             .field("encryption_enabled", &self.encryption.is_some())
+            .field("remote_encryption_enabled", &{
+                #[cfg(feature = "remote")]
+                {
+                    self.remote_encryption.is_some()
+                }
+                #[cfg(not(feature = "remote"))]
+                {
+                    false
+                }
+            })
             .finish()
     }
 }
 
-/// An asynchronous store for BDK wallet changesets backed by a local Turso database.
+/// An asynchronous store for BDK wallet changesets backed by Turso.
 ///
-/// Use [`Store::new`] for a database with default settings, or [`Store::new_with_options`] to opt
-/// into Turso experimental features. Call [`Store::migrate`] before using the low-level read/write
-/// methods; initialization through `AsyncWalletPersister` performs migration automatically.
-#[derive(Debug, Clone)]
+/// Local stores use Turso in process. With the `remote` feature, remote stores keep a local sync
+/// cache and synchronize changes with Turso Cloud. Call [`Store::migrate`] before using low-level
+/// read/write methods; `AsyncWalletPersister` initialization performs migration automatically.
+#[derive(Clone)]
 pub struct Store {
-    pub(crate) database: Database,
+    pub(crate) database: StoreDatabase,
     options: Option<Options>,
+}
+
+#[derive(Clone)]
+pub(crate) enum StoreDatabase {
+    Local(LocalDatabase),
+    #[cfg(feature = "remote")]
+    Remote(turso::sync::Database),
+}
+
+impl fmt::Debug for Store {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Store")
+            .field(
+                "backend",
+                &match &self.database {
+                    StoreDatabase::Local(_) => "local",
+                    #[cfg(feature = "remote")]
+                    StoreDatabase::Remote(_) => "remote",
+                },
+            )
+            .field("options", &self.options)
+            .finish()
+    }
 }
 
 impl Store {
@@ -192,6 +244,13 @@ impl Store {
     /// # }
     /// ```
     pub async fn new_with_options(path: &str, options: Options) -> Result<Self, Error> {
+        #[cfg(feature = "remote")]
+        if options.remote_encryption.is_some() {
+            return Err(Error::UnsupportedOption(
+                "remote encryption can only be used with Store::new_remote_with_options".into(),
+            ));
+        }
+
         let mut builder = Builder::new_local(path)
             .experimental_index_method(options.index_method)
             .experimental_multiprocess_wal(options.multiprocess_wal)
@@ -209,35 +268,128 @@ impl Store {
 
         let database = builder.build().await?;
         Ok(Self {
-            database,
+            database: StoreDatabase::Local(database),
             options: Some(options),
         })
     }
 
-    /// Wrap an already-open Turso database in a `Store`.
+    /// Connect to a Turso Cloud database using a local sync cache.
+    ///
+    /// This constructor requires the `remote` feature. `local_path` is the on-device cache file,
+    /// while `remote_url` and `auth_token` are supplied by the caller. Reads pull remote changes
+    /// before accessing the cache, and committed writes are pushed to Turso Cloud. If a push fails
+    /// after a local commit, the method returns an error but the cache may contain the write; retry
+    /// the same persistence operation to retry its upload. Use a disposable remote database for
+    /// integration testing.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "remote")]
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use bdk_turso::Store;
+    ///
+    /// let store = Store::new_remote(
+    ///     "wallet-cache.db",
+    ///     "libsql://your-database.turso.io",
+    ///     "your-auth-token",
+    /// ).await?;
+    /// store.migrate().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "remote")]
+    pub async fn new_remote(
+        local_path: &str,
+        remote_url: &str,
+        auth_token: &str,
+    ) -> Result<Self, Error> {
+        Self::new_remote_with_options(local_path, remote_url, auth_token, Options::default()).await
+    }
+
+    /// Connect to Turso Cloud using a local cache and the supplied database options.
+    ///
+    /// Local at-rest encryption and MVCC passive checkpointing are unsupported in sync mode and
+    /// return an error. Use [`Options::with_remote_encryption`] for Turso Cloud encryption; this
+    /// does not encrypt the local cache. The remaining experimental engine options are forwarded to
+    /// Turso's sync builder.
+    #[cfg(feature = "remote")]
+    pub async fn new_remote_with_options(
+        local_path: &str,
+        remote_url: &str,
+        auth_token: &str,
+        options: Options,
+    ) -> Result<Self, Error> {
+        if options.encryption.is_some() {
+            return Err(Error::UnsupportedOption(
+                "local at-rest encryption is unsupported in remote sync mode; use `with_remote_encryption` for Turso Cloud encryption (the local cache remains unencrypted)".into(),
+            ));
+        }
+        if options.mvcc_passive_checkpoint {
+            return Err(Error::UnsupportedOption(
+                "MVCC passive checkpointing is not supported by Turso's remote sync builder".into(),
+            ));
+        }
+
+        let mut builder = turso::sync::Builder::new_remote(local_path)
+            .with_remote_url(remote_url)
+            .with_auth_token(auth_token)
+            .experimental_index_method(options.index_method)
+            .experimental_multiprocess_wal(options.multiprocess_wal)
+            .experimental_vacuum(options.vacuum)
+            .experimental_attach(options.attach)
+            .experimental_generated_columns(options.generated_columns)
+            .experimental_without_rowid(options.without_rowid);
+
+        if let Some((key, cipher)) = &options.remote_encryption {
+            builder = builder.with_remote_encryption(key.clone(), *cipher);
+        }
+
+        let database = builder.build().await?;
+        Ok(Self {
+            database: StoreDatabase::Remote(database),
+            options: Some(options),
+        })
+    }
+
+    /// Wrap an already-open local Turso database in a `Store`.
     ///
     /// This does not open a path or run the BDK schema migration. Call [`Store::migrate`] before
     /// using persistence methods. Because the database was created externally, its opening options
     /// are not inferred by the store.
-    pub fn from_database(database: Database) -> Self {
+    pub fn from_database(database: LocalDatabase) -> Self {
         Self {
-            database,
+            database: StoreDatabase::Local(database),
             options: None,
         }
     }
 
     /// Return the options retained by this store, if they are known.
     ///
-    /// Stores created with [`Store::new`], [`Store::new_with_options`], [`Store::new_memory`], or
-    /// [`Store::new_memory_with_options`] retain the configuration passed to Turso. Stores wrapped
+    /// Stores created with a constructor retain the configuration passed to Turso. Stores wrapped
     /// with [`Store::from_database`] return `None` because the database's original settings cannot
     /// be inferred.
     pub fn options(&self) -> Option<&Options> {
         self.options.as_ref()
     }
 
-    pub(crate) fn connect(&self) -> Result<Connection, Error> {
-        Ok(self.database.connect()?)
+    pub(crate) async fn connect(&self) -> Result<Connection, Error> {
+        match &self.database {
+            StoreDatabase::Local(database) => Ok(database.connect()?),
+            #[cfg(feature = "remote")]
+            StoreDatabase::Remote(database) => {
+                database.pull().await?;
+                Ok(database.connect().await?)
+            }
+        }
+    }
+
+    pub(crate) async fn push(&self) -> Result<(), Error> {
+        match &self.database {
+            StoreDatabase::Local(_) => Ok(()),
+            #[cfg(feature = "remote")]
+            StoreDatabase::Remote(database) => Ok(database.push().await?),
+        }
     }
 
     /// Apply the bundled BDK persistence schema in a transaction.
@@ -245,7 +397,7 @@ impl Store {
     /// This migration is safe to run repeatedly. It must be run before calling the low-level
     /// changeset read/write methods directly; `AsyncWalletPersister::initialize` runs it for you.
     pub async fn migrate(&self) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         txn.execute_batch(include_str!("../migrations/0001_schema.up.sql"))
             .await?;
@@ -253,6 +405,8 @@ impl Store {
         txn.execute_batch(include_str!("../migrations/0002_psbt.up.sql"))
             .await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -264,10 +418,12 @@ impl Store {
         &self,
         tx_graph: &tx_graph::ChangeSet<ConfirmationBlockTime>,
     ) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         Self::write_tx_graph_in_transaction(&txn, tx_graph).await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -346,10 +502,12 @@ impl Store {
         &self,
         local_chain: &local_chain::ChangeSet,
     ) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         Self::write_local_chain_in_transaction(&txn, local_chain).await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -384,10 +542,12 @@ impl Store {
         &self,
         keychain_txout: &keychain_txout::ChangeSet,
     ) -> Result<(), Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         Self::write_keychain_txout_in_transaction(&txn, keychain_txout).await?;
         txn.commit().await?;
+        drop(conn);
+        self.push().await?;
         Ok(())
     }
 
@@ -423,7 +583,7 @@ impl Store {
     ///
     /// Returns the persisted transactions, timestamps, outputs, and confirmation anchors.
     pub async fn read_tx_graph(&self) -> Result<tx_graph::ChangeSet<ConfirmationBlockTime>, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let changeset = Self::read_tx_graph_in_transaction(&txn).await?;
         txn.commit().await?;
@@ -508,7 +668,7 @@ impl Store {
     ///
     /// Each stored height and hash is returned as a block entry with a hash.
     pub async fn read_local_chain(&self) -> Result<local_chain::ChangeSet, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let changeset = Self::read_local_chain_in_transaction(&txn).await?;
         txn.commit().await?;
@@ -534,7 +694,7 @@ impl Store {
     /// The returned changeset includes entries present in the database; an empty database yields
     /// empty maps.
     pub async fn read_keychain_txout(&self) -> Result<keychain_txout::ChangeSet, Error> {
-        let mut conn = self.connect()?;
+        let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let changeset = Self::read_keychain_txout_in_transaction(&txn).await?;
         txn.commit().await?;
@@ -596,6 +756,50 @@ mod test {
         assert!(!options.without_rowid);
         assert!(!options.mvcc_passive_checkpoint);
         assert!(options.encryption.is_none());
+        #[cfg(feature = "remote")]
+        assert!(options.remote_encryption.is_none());
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn unsupported_remote_options_return_actionable_errors() -> anyhow::Result<()> {
+        let local_encryption = Options::new().with_encryption(EncryptionOpts {
+            cipher: "aes256gcm".to_owned(),
+            hexkey: "00".repeat(32),
+        });
+        let error = Store::new_remote_with_options(
+            ":memory:",
+            "libsql://unused.turso.io",
+            "unused-token",
+            local_encryption,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::UnsupportedOption(message) if message.contains("local at-rest encryption"))
+        );
+
+        let error = Store::new_remote_with_options(
+            ":memory:",
+            "libsql://unused.turso.io",
+            "unused-token",
+            Options::new().with_mvcc_passive_checkpoint(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::UnsupportedOption(message) if message.contains("MVCC passive checkpointing"))
+        );
+
+        let remote_encryption = Options::new()
+            .with_remote_encryption("unused-key", turso::sync::RemoteEncryptionCipher::Aes256Gcm);
+        let error = Store::new_with_options(":memory:", remote_encryption)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::UnsupportedOption(message) if message.contains("remote encryption"))
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -603,7 +807,8 @@ mod test {
         let store = Store::new_memory().await?;
         assert!(store.options().is_some());
 
-        let wrapped = Store::from_database(store.database.clone());
+        let database = Builder::new_local(":memory:").build().await?;
+        let wrapped = Store::from_database(database);
         assert!(wrapped.options().is_none());
         Ok(())
     }
@@ -614,7 +819,7 @@ mod test {
         let store = Store::new_memory().await?;
         store.migrate().await?;
 
-        let conn = store.connect()?;
+        let conn = store.connect().await?;
         let mut rows = conn
             .query(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'psbt'",
@@ -638,7 +843,7 @@ mod test {
         changeset.blocks.insert(1, Some(Hash::hash(b"1a")));
         store.write_local_chain(&changeset).await?;
 
-        let conn = store.connect()?;
+        let conn = store.connect().await?;
         let mut rows = conn
             .query("SELECT height, hash FROM block WHERE height = 1", ())
             .await?;
@@ -654,7 +859,7 @@ mod test {
         changeset.blocks.insert(1, Some(Hash::hash(b"1a")));
         store.write_local_chain(&changeset).await?;
 
-        let conn = store.connect()?;
+        let conn = store.connect().await?;
         let mut rows = conn
             .query("SELECT height, hash FROM block WHERE height = 1", ())
             .await?;
