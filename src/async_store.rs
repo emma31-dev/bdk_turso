@@ -480,7 +480,7 @@ impl Store {
         for (anchor, txid) in &tx_graph.anchors {
             let BlockId { height, hash } = anchor.block_id;
             conn.execute(
-                "INSERT OR IGNORE INTO anchor(block_height, block_hash, txid, confirmation_time) VALUES(?1, ?2, ?3, ?4)",
+                "INSERT INTO anchor(block_height, block_hash, txid, confirmation_time) VALUES(?1, ?2, ?3, ?4) ON CONFLICT DO UPDATE SET confirmation_time = ?4",
                 (
                     i64::from(height),
                     hash.to_string(),
