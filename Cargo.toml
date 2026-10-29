@@ -1,6 +1,6 @@
 [package]
 name = "bdk_turso"
-version = "0.2.4"
+version = "0.2.5"
 authors = ["Emmanuel Fidelis"]
 rust-version = "1.88.0"
 edition = "2024"

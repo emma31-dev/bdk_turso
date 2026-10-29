@@ -4,6 +4,8 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+## [0.2.5]
+
 ### Added
 
 - Optional `remote` feature for syncing a local Turso cache with Turso Cloud through `Store::new_remote` and `Store::new_remote_with_options`, including remote encryption configuration.
