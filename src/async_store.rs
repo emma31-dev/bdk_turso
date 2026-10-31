@@ -169,6 +169,10 @@ impl fmt::Debug for Options {
 /// Local stores use Turso in process. With the `remote` feature, remote stores keep a local sync
 /// cache and synchronize changes with Turso Cloud. Call [`Store::migrate`] before using low-level
 /// read/write methods; `AsyncWalletPersister` initialization performs migration automatically.
+///
+/// Do not run `bdk_sqlite::Store::migrate()` on this database. Since it has no SQLx migration
+/// history, `bdk_sqlite` will run migrations containing `DROP TABLE IF EXISTS` statements and
+/// erase the existing wallet state.
 #[derive(Clone)]
 pub struct Store {
     pub(crate) database: StoreDatabase,
