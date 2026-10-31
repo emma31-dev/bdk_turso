@@ -432,6 +432,27 @@ async fn concurrent_writes_preserve_both_changesets() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "psbt")]
+#[tokio::test]
+async fn concurrent_file_wallet_and_psbt_writes_succeed() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("concurrent.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let store = Store::new(path).await?;
+    store.migrate().await?;
+
+    let changeset = full_changeset(50);
+    let psbt = bdk_wallet::bitcoin::Psbt::from_unsigned_tx((*transaction(51)).clone())?;
+    let (wallet_result, psbt_result) =
+        tokio::join!(store.write_changeset(&changeset), store.write_psbt(&psbt),);
+    wallet_result?;
+    let psbt_txid = psbt_result?;
+
+    assert_eq!(store.read_changeset().await?, changeset);
+    assert_eq!(store.read_psbt(psbt_txid).await?, Some(psbt));
+    Ok(())
+}
+
 #[tokio::test]
 async fn file_reopens_and_is_readable_by_bdk_sqlite() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
