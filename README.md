@@ -29,19 +29,37 @@ Turso's async-first design allows `bdk_turso` to implement `AsyncWalletPersister
 
 ## Usage
 
-The API is not finalized; this illustrative example shows the intended shape:
+With the `wallet` feature enabled, `Store` implements BDK's async wallet persistence API. Replace the descriptor strings below with valid descriptors for your wallet.
 
-```rust,ignore
+```rust,no_run
 use bdk_turso::Store;
-use bdk_wallet::{bitcoin::Network, Wallet};
+use bdk_wallet::{bitcoin::Network, KeychainKind, Wallet};
 
-let mut store = Store::new("wallet.sqlite")?;
-let wallet = Wallet::new_or_load(
-    descriptor,
-    change_descriptor,
-    Network::Testnet,
-    &mut store,
-)?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let external_descriptor = "wpkh(...)";
+    let internal_descriptor = "wpkh(...)";
+    let mut store = Store::new("wallet.sqlite").await?;
+
+    let mut wallet = match Wallet::load()
+        .descriptor(KeychainKind::External, Some(external_descriptor))
+        .descriptor(KeychainKind::Internal, Some(internal_descriptor))
+        .check_network(Network::Regtest)
+        .load_wallet_async(&mut store)
+        .await?
+    {
+        Some(wallet) => wallet,
+        None => Wallet::create(external_descriptor, internal_descriptor)
+            .network(Network::Regtest)
+            .create_wallet_async(&mut store)
+            .await?,
+    };
+
+    let address = wallet.reveal_next_address(KeychainKind::External);
+    wallet.persist_async(&mut store).await?;
+    println!("Receive address: {}", address.address);
+    Ok(())
+}
 ```
 
 ## Examples
