@@ -46,11 +46,10 @@ impl Store {
         Ok(())
     }
 
-    /// Insert the wallet network if the database does not already contain one.
+    /// Persist the wallet network, replacing any previously stored value.
     ///
-    /// Existing network values are left unchanged. This method opens and commits its own
-    /// transaction; use wallet changeset persistence when several state components must be written
-    /// atomically.
+    /// This method opens and commits its own transaction; use wallet changeset persistence when
+    /// several state components must be written atomically.
     pub async fn write_network(&self, network: Network) -> Result<(), Error> {
         let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
@@ -66,17 +65,17 @@ impl Store {
         network: Network,
     ) -> Result<(), Error> {
         conn.execute(
-            "INSERT OR IGNORE INTO network(id, network) VALUES(0, ?1)",
+            "INSERT INTO network(id, network) VALUES(0, ?1) ON CONFLICT(id) DO UPDATE SET network = ?1",
             [network.to_string()],
         )
         .await?;
         Ok(())
     }
 
-    /// Insert descriptors for the external and internal keychains when they are absent.
+    /// Persist external and internal keychain descriptors, replacing rows for matching keychains.
     ///
-    /// Existing descriptor rows are not replaced. This method opens and commits its own
-    /// transaction; use wallet changeset persistence to update multiple state components atomically.
+    /// This method opens and commits its own transaction; use wallet changeset persistence to
+    /// update multiple state components atomically.
     pub async fn write_keychain_descriptors(
         &self,
         descriptors: &BTreeMap<KeychainKind, Descriptor<DescriptorPublicKey>>,
@@ -100,7 +99,7 @@ impl Store {
                 KeychainKind::Internal => 1,
             };
             conn.execute(
-                "INSERT OR IGNORE INTO keychain(keychain, descriptor) VALUES(?1, ?2)",
+                "INSERT INTO keychain(keychain, descriptor) VALUES(?1, ?2) ON CONFLICT(keychain) DO UPDATE SET descriptor = ?2",
                 (keychain, descriptor.to_string()),
             )
             .await?;
@@ -221,7 +220,7 @@ impl Store {
             let OutPoint { txid, vout } = outpoint;
             if is_locked {
                 conn.execute(
-                    "INSERT OR IGNORE INTO locked_outpoint(txid, vout) VALUES(?1, ?2)",
+                    "INSERT INTO locked_outpoint(txid, vout) VALUES(?1, ?2) ON CONFLICT(txid, vout) DO UPDATE SET txid = ?1, vout = ?2",
                     (txid.to_string(), i64::from(vout)),
                 )
                 .await?;
@@ -300,13 +299,14 @@ mod test {
         store.migrate().await?;
 
         store.write_network(Network::Bitcoin).await?;
-        store.write_network(Network::Bitcoin).await?;
+        store.write_network(Network::Signet).await?;
 
         let conn = store.connect().await?;
         let mut rows = conn.query("SELECT COUNT(*) FROM network", ()).await?;
         let row = rows.next().await?.expect("expected count row");
         let count: i64 = row.get(0)?;
         assert_eq!(count, 1, "network table should have at most 1 row");
+        assert_eq!(store.read_network().await?, Some(Network::Signet));
         Ok(())
     }
 }

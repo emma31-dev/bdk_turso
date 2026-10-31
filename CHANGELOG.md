@@ -4,6 +4,10 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Wallet persistence writes now apply conflicting block, descriptor, network, and script-cache values; locked-outpoint inserts use explicit upserts.
+
 ## [0.2.5]
 
 ### Added

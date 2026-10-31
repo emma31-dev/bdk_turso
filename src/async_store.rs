@@ -527,7 +527,7 @@ impl Store {
             match hash {
                 Some(hash) => {
                     conn.execute(
-                        "INSERT OR IGNORE INTO block(height, hash) VALUES(?1, ?2)",
+                        "INSERT INTO block(height, hash) VALUES(?1, ?2) ON CONFLICT(height) DO UPDATE SET hash = ?2",
                         (i64::from(height), hash.to_string()),
                     )
                     .await?;
@@ -544,8 +544,7 @@ impl Store {
 
     /// Persist keychain reveal indices and cached scripts in a store-owned transaction.
     ///
-    /// Reveal indices are updated when present in the changeset; cached scripts are inserted only
-    /// when absent.
+    /// Reveal indices and cached scripts are updated when present in the changeset.
     pub async fn write_keychain_txout(
         &self,
         keychain_txout: &keychain_txout::ChangeSet,
@@ -573,7 +572,7 @@ impl Store {
         for (descriptor_id, spk_cache) in &keychain_txout.spk_cache {
             for (derivation_index, script) in spk_cache {
                 conn.execute(
-                    "INSERT OR IGNORE INTO keychain_script_pubkey(descriptor_id, derivation_index, script) VALUES(?1, ?2, ?3)",
+                    "INSERT INTO keychain_script_pubkey(descriptor_id, derivation_index, script) VALUES(?1, ?2, ?3) ON CONFLICT(descriptor_id, derivation_index) DO UPDATE SET script = ?3",
                     (
                         descriptor_id.to_string(),
                         i64::from(*derivation_index),
@@ -900,7 +899,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn block_table_height_is_unique() -> anyhow::Result<()> {
+    async fn block_table_height_rebases_reorgs() -> anyhow::Result<()> {
         let mut changeset = local_chain::ChangeSet::default();
         changeset.blocks.insert(0, Some(Hash::hash(b"0")));
         changeset.blocks.insert(1, Some(Hash::hash(b"1")));
@@ -918,7 +917,7 @@ mod test {
             .await?;
         let row = rows.next().await?.expect("expected block row");
         let row_hash: String = row.get(1)?;
-        let expected_hash = BlockHash::hash(b"1").to_string();
+        let expected_hash = BlockHash::hash(b"1a").to_string();
         assert_eq!(row_hash, expected_hash);
 
         let mut changeset = local_chain::ChangeSet::default();

@@ -1,6 +1,6 @@
 #![cfg(feature = "wallet")]
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use bdk_chain::{
     BlockId, ConfirmationBlockTime, DescriptorExt, Merge,
@@ -227,6 +227,96 @@ async fn keychain_changeset_round_trips() -> anyhow::Result<()> {
     };
 
     assert_persist_changesets(&store, &[changeset]).await
+}
+
+#[tokio::test]
+async fn wallet_component_writes_rebase_existing_values() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    store.migrate().await?;
+
+    let (external, internal) = descriptors();
+    let mut descriptors = BTreeMap::from([(KeychainKind::External, external.clone())]);
+    store.write_keychain_descriptors(&descriptors).await?;
+    descriptors.insert(KeychainKind::External, internal.clone());
+    store.write_keychain_descriptors(&descriptors).await?;
+    assert_eq!(
+        store
+            .read_keychain_descriptors()
+            .await?
+            .get(&KeychainKind::External),
+        Some(&internal)
+    );
+
+    let descriptor_id = external.descriptor_id();
+    let old_script = ScriptBuf::from_bytes(vec![0x51]);
+    let new_script = ScriptBuf::from_bytes(vec![0x52]);
+    let mut indexer = keychain_txout::ChangeSet::default();
+    indexer
+        .spk_cache
+        .entry(descriptor_id)
+        .or_default()
+        .insert(0, old_script);
+    store.write_keychain_txout(&indexer).await?;
+    indexer
+        .spk_cache
+        .get_mut(&descriptor_id)
+        .expect("script cache was inserted")
+        .insert(0, new_script.clone());
+    store.write_keychain_txout(&indexer).await?;
+    assert_eq!(
+        store
+            .read_keychain_txout()
+            .await?
+            .spk_cache
+            .get(&descriptor_id)
+            .and_then(|scripts| scripts.get(&0)),
+        Some(&new_script)
+    );
+
+    let outpoint = OutPoint::new(Txid::from_byte_array([42; 32]), 1);
+    let mut locked = locked_outpoints::ChangeSet::default();
+    locked.outpoints.insert(outpoint, true);
+    store.write_locked_outpoints(&locked).await?;
+    store.write_locked_outpoints(&locked).await?;
+    assert_eq!(
+        store
+            .read_locked_outpoints()
+            .await?
+            .outpoints
+            .get(&outpoint),
+        Some(&true)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn reorged_block_round_trips_after_reopen() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("reorg.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let old_hash = BlockHash::hash(b"old block");
+    let new_hash = BlockHash::hash(b"replacement block");
+
+    {
+        let store = Store::new(path).await?;
+        store.migrate().await?;
+        store
+            .write_local_chain(&local_chain::ChangeSet {
+                blocks: [(100, Some(old_hash))].into(),
+            })
+            .await?;
+        store
+            .write_local_chain(&local_chain::ChangeSet {
+                blocks: [(100, Some(new_hash))].into(),
+            })
+            .await?;
+    }
+
+    let store = Store::new(path).await?;
+    store.migrate().await?;
+    let changeset = store.read_local_chain().await?;
+    assert_eq!(changeset.blocks.get(&100), Some(&Some(new_hash)));
+    Ok(())
 }
 
 #[tokio::test]
