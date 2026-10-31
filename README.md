@@ -62,6 +62,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Options and encryption
+
+`Options::new()` leaves all experimental Turso settings disabled. Enable settings with the provided builder methods. Local at-rest encryption is configured with the publicly re-exported `EncryptionOpts` and `Options::with_encryption`; no separate Cargo feature is required. Supply a 32-byte key as hexadecimal through a secret manager or environment variable, never a committed literal. Keep the same cipher and key to reopen the database; losing the key makes its data inaccessible.
+
+```rust,no_run
+use bdk_turso::{EncryptionOpts, Options, Store};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = Options::new().with_encryption(EncryptionOpts {
+        cipher: "aes256gcm".to_owned(),
+        hexkey: std::env::var("TURSO_ENCRYPTION_HEXKEY")?,
+    });
+    let store = Store::new_with_options("wallet-encrypted.sqlite", options).await?;
+    store.migrate().await?;
+    Ok(())
+}
+```
+
+Local encryption is not supported for remote sync stores, and Turso Cloud encryption does not encrypt the local cache; see [Remote Turso](#remote-turso).
+
 ## Persistence conflict behavior
 
 `bdk_turso` uses last-write-wins behavior for keyed persistence writes: when an incoming write targets an existing key, its value replaces the stored value rather than being ignored. This applies to component and wallet changeset writes, including a replacement block hash at the same height, and to PSBT writes. Explicit deletion entries remove their rows. This is storage-level behavior, not semantic validation of which value is newer or correct; ordering between independent remote clients follows Turso's sync behavior.
