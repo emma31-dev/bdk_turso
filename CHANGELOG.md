@@ -7,10 +7,15 @@ Notable changes to `bdk_turso` are documented here.
 ### Added
 
 - `Store::migrate_to` copies persisted tables and rows to another store, including between in-memory and file stores. Source rows replace conflicting destination rows, while destination-only rows remain.
+- Public `Store::push()` lets callers retry remote uploads; `Error::RemotePush` identifies a failed upload after local commit.
 
 ### Fixed
 
 - Wallet persistence writes now apply conflicting block, descriptor, network, and script-cache values; locked-outpoint inserts use explicit upserts.
+
+### Changed
+
+- Marked `Error` as non-exhaustive, so downstream exhaustive matches must include a wildcard arm, and added variant-specific prefixes to its display messages.
 
 ## [0.2.5]
 
