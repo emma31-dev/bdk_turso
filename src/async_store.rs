@@ -397,7 +397,7 @@ impl Store {
         match &self.database {
             StoreDatabase::Local(_) => Ok(()),
             #[cfg(feature = "remote")]
-            StoreDatabase::Remote(database) => Ok(database.push().await?),
+            StoreDatabase::Remote(database) => database.push().await.map_err(Error::RemotePush),
         }
     }
 

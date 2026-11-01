@@ -96,7 +96,7 @@ Both examples requires Polar.
 
 ## Remote Turso
 
-Enable the `remote` feature to connect to Turso Cloud through Turso's local sync engine. The store keeps a local cache at the supplied path, pulls remote changes before reads, and pushes committed writes. An upload can fail after the local commit; the cache retains the change and the persistence operation returns an error. Call `store.push().await` to retry uploading pending changes without reapplying the changeset. The cache is not encrypted by Turso Cloud encryption; configure `Options::with_remote_encryption` for Turso Cloud database encryption and protect the local cache separately.
+Enable the `remote` feature to connect to Turso Cloud through Turso's local sync engine. The store keeps a local cache at the supplied path, pulls remote changes before reads, and pushes committed writes. An upload can fail after the local commit; the cache retains the change and the persistence operation returns `Error::RemotePush`. Call `store.push().await` to retry uploading pending changes without reapplying the changeset; a failure from this call is also reported as `Error::RemotePush`. The cache is not encrypted by Turso Cloud encryption; configure `Options::with_remote_encryption` for Turso Cloud database encryption and protect the local cache separately.
 
 ```rust,ignore
 use bdk_turso::Store;

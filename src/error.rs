@@ -24,6 +24,9 @@ pub enum Error {
     /// A requested database option is unsupported for the selected store type.
     #[cfg(feature = "remote")]
     UnsupportedOption(String),
+    /// A remote push failed after local changes were committed.
+    #[cfg(feature = "remote")]
+    RemotePush(turso::Error),
     /// A Turso operation failed while opening, querying, or updating the database.
     Turso(turso::Error),
 }
@@ -39,6 +42,8 @@ impl fmt::Display for Error {
             Self::ParseNetwork(e) => write!(f, "Network Parse Error: {e}"),
             #[cfg(feature = "remote")]
             Self::UnsupportedOption(message) => write!(f, "Unsupported Option Error: {message}"),
+            #[cfg(feature = "remote")]
+            Self::RemotePush(e) => write!(f, "Remote Push Error: {e}"),
             Self::Turso(e) => write!(f, "Turso Error: {e}"),
         }
     }

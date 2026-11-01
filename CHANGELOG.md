@@ -6,7 +6,7 @@ Notable changes to `bdk_turso` are documented here.
 
 ### Added
 
-- Public `Store::push()` lets callers retry uploading locally committed remote changes.
+- Public `Store::push()` lets callers retry remote uploads; `Error::RemotePush` identifies a failed upload after local commit.
 
 ### Fixed
 
