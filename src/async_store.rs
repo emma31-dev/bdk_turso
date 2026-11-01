@@ -388,7 +388,12 @@ impl Store {
         }
     }
 
-    pub(crate) async fn push(&self) -> Result<(), Error> {
+    /// Push locally committed changes from the cache to Turso Cloud.
+    ///
+    /// Remote persistence methods call this after committing local changes. If an upload fails,
+    /// call `push` to retry it without reapplying the changeset. This is a no-op for local stores
+    /// and does not pull remote changes.
+    pub async fn push(&self) -> Result<(), Error> {
         match &self.database {
             StoreDatabase::Local(_) => Ok(()),
             #[cfg(feature = "remote")]
