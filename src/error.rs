@@ -7,6 +7,7 @@ use bitcoin::{consensus, hex::error::HexToArrayError, network::ParseNetworkError
 
 /// Errors returned while encoding, decoding, parsing, or accessing persisted wallet data.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// A stored Bitcoin transaction could not be decoded from consensus encoding.
     Decode(consensus::encode::Error),
@@ -30,15 +31,15 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Decode(e) => write!(f, "{e}"),
-            Self::FromInt(e) => write!(f, "{e}"),
-            Self::HexToArray(e) => write!(f, "{e}"),
-            Self::Miniscript(e) => write!(f, "{e}"),
-            Self::Psbt(e) => write!(f, "{e}"),
-            Self::ParseNetwork(e) => write!(f, "{e}"),
+            Self::Decode(e) => write!(f, "Decode Error: {e}"),
+            Self::FromInt(e) => write!(f, "Integer Conversion Error: {e}"),
+            Self::HexToArray(e) => write!(f, "Hex Decode Error: {e}"),
+            Self::Miniscript(e) => write!(f, "Miniscript Error: {e}"),
+            Self::Psbt(e) => write!(f, "PSBT Error: {e}"),
+            Self::ParseNetwork(e) => write!(f, "Network Parse Error: {e}"),
             #[cfg(feature = "remote")]
-            Self::UnsupportedOption(message) => write!(f, "{message}"),
-            Self::Turso(e) => write!(f, "{e}"),
+            Self::UnsupportedOption(message) => write!(f, "Unsupported Option Error: {message}"),
+            Self::Turso(e) => write!(f, "Turso Error: {e}"),
         }
     }
 }

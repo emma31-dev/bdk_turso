@@ -8,6 +8,10 @@ Notable changes to `bdk_turso` are documented here.
 
 - Wallet persistence writes now apply conflicting block, descriptor, network, and script-cache values; locked-outpoint inserts use explicit upserts.
 
+### Changed
+
+- Marked `Error` as non-exhaustive, so downstream exhaustive matches must include a wildcard arm, and added variant-specific prefixes to its display messages.
+
 ## [0.2.5]
 
 ### Added
