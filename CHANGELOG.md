@@ -4,6 +4,10 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `Store::migrate_to` copies persisted tables and rows to another store, including between in-memory and file stores. Source rows replace conflicting destination rows, while destination-only rows remain.
+
 ### Fixed
 
 - Wallet persistence writes now apply conflicting block, descriptor, network, and script-cache values; locked-outpoint inserts use explicit upserts.

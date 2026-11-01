@@ -13,10 +13,15 @@ pub use turso::EncryptionOpts;
 #[cfg(feature = "remote")]
 pub use turso::sync::RemoteEncryptionCipher;
 use turso::{
-    Builder, Connection, Database as LocalDatabase, transaction::Transaction as DatabaseTransaction,
+    Builder, Connection, Database as LocalDatabase, Value,
+    transaction::Transaction as DatabaseTransaction,
 };
 
 use crate::Error;
+
+/// A column as reported by `PRAGMA table_info`: name, declared type, not-null flag, default value,
+/// and primary-key position.
+type TableColumn = (String, String, i64, Value, i64);
 
 /// Opt-in Turso features applied when opening a [`Store`].
 ///
@@ -416,6 +421,130 @@ impl Store {
         drop(conn);
         self.push().await?;
         Ok(())
+    }
+
+    /// Copy tables and rows present in this store to `destination` without running schema migrations.
+    ///
+    /// Existing tables must have compatible column definitions. Source rows replace destination
+    /// rows on key conflicts, while destination-only rows and tables remain. The transfer is atomic
+    /// on the destination; the source is unchanged. Feature-gated tables are discovered from the
+    /// database itself, so this also works when the stores were opened with different features or
+    /// wrapped with [`Store::from_database`]. Internal SQLite and Turso tables are not copied.
+    /// Remote stores pull before access and the destination is pushed after the local transaction
+    /// commits; a failed remote push may leave the destination's local cache updated.
+    pub async fn migrate_to(&self, destination: &Store) -> Result<(), Error> {
+        let source_conn = self.connect().await?;
+        let mut destination_conn = destination.connect().await?;
+        let source_tables = Self::user_tables(&source_conn).await?;
+        let destination_tables = Self::user_tables(&destination_conn).await?;
+        let destination_names = destination_tables
+            .iter()
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect::<std::collections::HashSet<_>>();
+        let mut destination_columns: std::collections::HashMap<String, Vec<TableColumn>> =
+            std::collections::HashMap::new();
+        for (name, _) in &destination_tables {
+            let columns = Self::table_columns(&destination_conn, name).await?;
+            destination_columns.insert(name.to_ascii_lowercase(), columns);
+        }
+
+        let txn = destination_conn.transaction().await?;
+        for (table, create_sql) in source_tables {
+            if create_sql
+                .trim_start()
+                .to_ascii_lowercase()
+                .starts_with("create virtual table")
+            {
+                return Err(Error::Migration(format!(
+                    "virtual table `{table}` is outside the supported SQLite-compatible subset"
+                )));
+            }
+
+            let columns = Self::table_columns(&source_conn, &table).await?;
+            if columns.is_empty() {
+                return Err(Error::Migration(format!(
+                    "table `{table}` has no transferable columns"
+                )));
+            }
+
+            if destination_names.contains(&table.to_ascii_lowercase()) {
+                if let Some(destination_columns) =
+                    destination_columns.get(&table.to_ascii_lowercase())
+                    && columns != *destination_columns
+                {
+                    return Err(Error::Migration(format!(
+                        "table `{table}` has incompatible column definitions in the destination"
+                    )));
+                }
+            } else {
+                txn.execute_batch(&create_sql).await?;
+            }
+
+            let quoted_table = Self::quote_identifier(&table);
+            let quoted_columns = columns
+                .iter()
+                .map(|(name, _, _, _, _)| Self::quote_identifier(name))
+                .collect::<Vec<_>>();
+            let select_sql = format!("SELECT {} FROM {quoted_table}", quoted_columns.join(", "));
+            let insert_sql = format!(
+                "INSERT OR REPLACE INTO {quoted_table} ({}) VALUES ({})",
+                quoted_columns.join(", "),
+                (1..=columns.len())
+                    .map(|index| format!("?{index}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            let mut rows = source_conn.query(select_sql, ()).await?;
+            while let Some(row) = rows.next().await? {
+                let values = (0..columns.len())
+                    .map(|index| row.get_value(index))
+                    .collect::<turso::Result<Vec<_>>>()?;
+                txn.execute(&insert_sql, values).await?;
+            }
+        }
+
+        txn.commit().await?;
+        drop(destination_conn);
+        destination.push().await?;
+        Ok(())
+    }
+
+    async fn user_tables(conn: &Connection) -> Result<Vec<(String, String)>, Error> {
+        let mut rows = conn
+            .query(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL AND lower(substr(name, 1, 7)) != 'sqlite_' AND lower(substr(name, 1, 6)) != 'turso_' AND lower(substr(name, 1, 8)) != '__turso_' ORDER BY name",
+                (),
+            )
+            .await?;
+        let mut tables = Vec::new();
+        while let Some(row) = rows.next().await? {
+            tables.push((row.get(0)?, row.get(1)?));
+        }
+        Ok(tables)
+    }
+
+    async fn table_columns(conn: &Connection, table: &str) -> Result<Vec<TableColumn>, Error> {
+        let mut rows = conn
+            .query(
+                format!("PRAGMA table_info({})", Self::quote_identifier(table)),
+                (),
+            )
+            .await?;
+        let mut columns = Vec::new();
+        while let Some(row) = rows.next().await? {
+            columns.push((
+                row.get(1)?,
+                row.get(2)?,
+                row.get::<i64>(3)?,
+                row.get_value(4)?,
+                row.get::<i64>(5)?,
+            ));
+        }
+        Ok(columns)
+    }
+
+    fn quote_identifier(identifier: &str) -> String {
+        format!("\"{}\"", identifier.replace('"', "\"\""))
     }
 
     /// Persist transaction-graph changes in a transaction owned by this store.

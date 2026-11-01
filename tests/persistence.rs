@@ -414,10 +414,14 @@ async fn concurrent_writes_preserve_both_changesets() -> anyhow::Result<()> {
     let store = Store::new_memory().await?;
     store.migrate().await?;
 
-    let mut first = ChangeSet::default();
-    first.tx_graph = graph_changeset(11);
-    let mut second = ChangeSet::default();
-    second.tx_graph = graph_changeset(12);
+    let first = ChangeSet {
+        tx_graph: graph_changeset(11),
+        ..Default::default()
+    };
+    let second = ChangeSet {
+        tx_graph: graph_changeset(12),
+        ..Default::default()
+    };
 
     let (first_result, second_result) = tokio::join!(
         store.write_changeset(&first),
@@ -472,5 +476,108 @@ async fn file_reopens_and_is_readable_by_bdk_sqlite() -> anyhow::Result<()> {
 
     let sqlite_store = bdk_sqlite::Store::new(path).await?;
     assert_eq!(sqlite_store.read_changeset().await?, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn migrate_to_file_to_memory_transfers_changeset() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("source.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let expected = full_changeset(21);
+
+    let source = Store::new(path).await?;
+    source.migrate().await?;
+    source.write_changeset(&expected).await?;
+
+    let destination = Store::new_memory().await?;
+    source.migrate_to(&destination).await?;
+
+    assert_eq!(destination.read_changeset().await?, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn migrate_to_memory_to_file_transfers_changeset() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("destination.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let expected = full_changeset(22);
+
+    let source = Store::new_memory().await?;
+    source.migrate().await?;
+    source.write_changeset(&expected).await?;
+
+    let destination = Store::new(path).await?;
+    source.migrate_to(&destination).await?;
+
+    let reloaded = Store::new(path).await?;
+    reloaded.migrate().await?;
+    assert_eq!(reloaded.read_changeset().await?, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn migrate_to_source_remains_usable_after_transfer() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("source.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let expected = full_changeset(25);
+
+    let source = Store::new(path).await?;
+    source.migrate().await?;
+    source.write_changeset(&expected).await?;
+
+    let destination = Store::new_memory().await?;
+    source.migrate_to(&destination).await?;
+
+    source.migrate().await?;
+    assert_eq!(source.read_changeset().await?, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn migrate_to_source_wins_on_conflict() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("destination.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+
+    let source = Store::new_memory().await?;
+    source.migrate().await?;
+    source.write_changeset(&full_changeset(26)).await?;
+
+    let destination = Store::new(path).await?;
+    destination.migrate().await?;
+    destination.write_changeset(&full_changeset(27)).await?;
+
+    source.migrate_to(&destination).await?;
+
+    let result = destination.read_changeset().await?;
+    // Destination-only rows remain, while source rows replace conflicting destination rows.
+    assert_eq!(
+        result.local_chain.blocks.get(&127),
+        Some(&Some(BlockHash::from_byte_array([28; 32])))
+    );
+    assert_eq!(
+        result.local_chain.blocks.get(&126),
+        Some(&Some(BlockHash::from_byte_array([27; 32])))
+    );
+
+    let (external, _) = descriptors();
+    let external_id = external.descriptor_id();
+    assert_eq!(
+        result.indexer.last_revealed.get(&external_id),
+        Some(&(5 + 26)),
+        "source reveal index should win over the destination value"
+    );
+    assert_eq!(
+        result
+            .indexer
+            .spk_cache
+            .get(&external_id)
+            .and_then(|cache| cache.get(&0)),
+        Some(&ScriptBuf::from_bytes(vec![0x51, 26])),
+        "source cached script should win over the destination value"
+    );
     Ok(())
 }
