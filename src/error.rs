@@ -27,6 +27,8 @@ pub enum Error {
     UnsupportedOption(String),
     /// A Turso operation failed while opening, querying, or updating the database.
     Turso(turso::Error),
+    /// An unknown error occurred.
+    Unknown(String),
 }
 
 impl fmt::Display for Error {
@@ -42,6 +44,7 @@ impl fmt::Display for Error {
             #[cfg(feature = "remote")]
             Self::UnsupportedOption(message) => write!(f, "{message}"),
             Self::Turso(e) => write!(f, "{e}"),
+            Self::Unknown(e) => write!(f, "{e}"),
         }
     }
 }

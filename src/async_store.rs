@@ -426,16 +426,29 @@ impl Store {
     /// Copy tables and rows present in this store to `destination` without running schema migrations.
     ///
     /// Existing tables must have compatible column definitions. Source rows replace destination
-    /// rows on key conflicts, while destination-only rows and tables remain. The transfer is atomic
-    /// on the destination; the source is unchanged. Feature-gated tables are discovered from the
-    /// database itself, so this also works when the stores were opened with different features or
-    /// wrapped with [`Store::from_database`]. Internal SQLite and Turso tables are not copied.
-    /// Remote stores pull before access and the destination is pushed after the local transaction
-    /// commits; a failed remote push may leave the destination's local cache updated.
+    /// rows on key conflicts, while destination-only rows and tables remain. The destination is
+    /// expected to be empty, though merging into an existing store is supported. The transfer is
+    /// atomic on the destination; the source is unchanged. Feature-gated tables are discovered from
+    /// the database itself, so this also works when the stores were opened with different features
+    /// or wrapped with [`Store::from_database`]. Internal SQLite and Turso tables are not copied.
+    /// Both the source and destination are read through their own transactions, and remote stores
+    /// pull before access. The destination is pushed after the local transaction commits; a failed
+    /// remote push may leave the destination's local cache updated.
     pub async fn migrate_to(&self, destination: &Store) -> Result<(), Error> {
-        let source_conn = self.connect().await?;
+        let mut source_conn = self.connect().await?;
         let mut destination_conn = destination.connect().await?;
-        let source_tables = Self::user_tables(&source_conn).await?;
+        let (source_tables, source_columns) = {
+            let source_txn = source_conn.transaction().await?;
+            let source_tables = Self::user_tables(&source_txn).await?;
+            let mut source_columns: std::collections::HashMap<String, Vec<TableColumn>> =
+                std::collections::HashMap::new();
+            for (name, _) in &source_tables {
+                let columns = Self::table_columns(&source_txn, name).await?;
+                source_columns.insert(name.to_ascii_lowercase(), columns);
+            }
+            source_txn.commit().await?;
+            (source_tables, source_columns)
+        };
         let destination_tables = Self::user_tables(&destination_conn).await?;
         let destination_names = destination_tables
             .iter()
@@ -448,7 +461,8 @@ impl Store {
             destination_columns.insert(name.to_ascii_lowercase(), columns);
         }
 
-        let txn = destination_conn.transaction().await?;
+        let source_txn = source_conn.transaction().await?;
+        let destination_txn = destination_conn.transaction().await?;
         for (table, create_sql) in source_tables {
             if create_sql
                 .trim_start()
@@ -460,7 +474,10 @@ impl Store {
                 )));
             }
 
-            let columns = Self::table_columns(&source_conn, &table).await?;
+            let columns = source_columns
+                .get(&table.to_ascii_lowercase())
+                .cloned()
+                .ok_or(Error::Unknown("No tables".into()))?;
             if columns.is_empty() {
                 return Err(Error::Migration(format!(
                     "table `{table}` has no transferable columns"
@@ -477,7 +494,7 @@ impl Store {
                     )));
                 }
             } else {
-                txn.execute_batch(&create_sql).await?;
+                destination_txn.execute_batch(&create_sql).await?;
             }
 
             let quoted_table = Self::quote_identifier(&table);
@@ -494,16 +511,17 @@ impl Store {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
-            let mut rows = source_conn.query(select_sql, ()).await?;
+            let mut rows = source_txn.query(select_sql, ()).await?;
             while let Some(row) = rows.next().await? {
                 let values = (0..columns.len())
                     .map(|index| row.get_value(index))
                     .collect::<turso::Result<Vec<_>>>()?;
-                txn.execute(&insert_sql, values).await?;
+                destination_txn.execute(&insert_sql, values).await?;
             }
         }
 
-        txn.commit().await?;
+        destination_txn.commit().await?;
+        source_txn.commit().await?;
         drop(destination_conn);
         destination.push().await?;
         Ok(())
