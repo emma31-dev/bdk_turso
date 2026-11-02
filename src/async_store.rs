@@ -393,11 +393,16 @@ impl Store {
         }
     }
 
-    pub(crate) async fn push(&self) -> Result<(), Error> {
+    /// Push locally committed changes from the cache to Turso Cloud.
+    ///
+    /// Remote persistence methods call this after committing local changes. If an upload fails,
+    /// call `push` to retry it without reapplying the changeset. This is a no-op for local stores
+    /// and does not pull remote changes.
+    pub async fn push(&self) -> Result<(), Error> {
         match &self.database {
             StoreDatabase::Local(_) => Ok(()),
             #[cfg(feature = "remote")]
-            StoreDatabase::Remote(database) => Ok(database.push().await?),
+            StoreDatabase::Remote(database) => database.push().await.map_err(Error::RemotePush),
         }
     }
 
@@ -477,7 +482,9 @@ impl Store {
             let columns = source_columns
                 .get(&table.to_ascii_lowercase())
                 .cloned()
-                .ok_or(Error::Unknown("No tables".into()))?;
+                .ok_or_else(|| {
+                    Error::Migration(format!("missing column metadata for `{table}`"))
+                })?;
             if columns.is_empty() {
                 return Err(Error::Migration(format!(
                     "table `{table}` has no transferable columns"
