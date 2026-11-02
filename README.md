@@ -40,6 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let external_descriptor = "wpkh(...)";
     let internal_descriptor = "wpkh(...)";
     let mut store = Store::new("wallet.sqlite").await?;
+    store.migrate().await?;
 
     let mut wallet = match Wallet::load()
         .descriptor(KeychainKind::External, Some(external_descriptor))
