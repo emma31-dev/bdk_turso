@@ -21,6 +21,8 @@ pub enum Error {
     Psbt(bitcoin::psbt::Error),
     /// The stored network name could not be parsed as a Bitcoin network.
     ParseNetwork(ParseNetworkError),
+    /// A store-to-store transfer could not safely copy the source schema or data.
+    Migration(String),
     /// A requested database option is unsupported for the selected store type.
     #[cfg(feature = "remote")]
     UnsupportedOption(String),
@@ -42,6 +44,7 @@ impl fmt::Display for Error {
             Self::ParseNetwork(e) => write!(f, "Network Parse Error: {e}"),
             #[cfg(feature = "remote")]
             Self::UnsupportedOption(message) => write!(f, "Unsupported Option Error: {message}"),
+            Self::Migration(message) => write!(f, "Migration error: {message}"),
             #[cfg(feature = "remote")]
             Self::RemotePush(e) => write!(f, "Remote Push Error: {e}"),
             Self::Turso(e) => write!(f, "Turso Error: {e}"),
