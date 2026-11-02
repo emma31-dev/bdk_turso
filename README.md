@@ -27,6 +27,27 @@ Turso's async-first design allows `bdk_turso` to implement `AsyncWalletPersister
 
 `bdk_turso` stays within Turso's SQLite-compatible feature subset and avoids Turso-only extensions. Unencrypted database files can be read by `bdk_sqlite`; Turso-encrypted files require Turso to open. Do not call `bdk_sqlite::Store::migrate()` on a `bdk_turso` database: it has no SQLx migration history, so `bdk_sqlite` runs migrations containing `DROP TABLE IF EXISTS` statements and erases the existing wallet state.
 
+## Installation
+
+`bdk_turso` requires Rust 1.88.0 or newer and an async runtime; the examples and persistence calls use `tokio`. The `turso` dependency is compiled from source as a pure-Rust crate, so no separate database server is needed.
+
+Add the crate with the features you need:
+
+```sh
+cargo add bdk_turso                 # wallet persistence, the default feature
+cargo add bdk_turso --features psbt # plus PSBT storage
+cargo add bdk_turso --features remote
+```
+
+Or declare it directly in `Cargo.toml`:
+
+```toml
+[dependencies]
+bdk_turso = { version = "0.2", features = ["wallet", "psbt"] }
+```
+
+Open a store and call `Store::migrate()` before reading or writing; tables for disabled features are not created. See [Feature flags](#feature-flags) for the full list.
+
 ## Usage
 
 With the `wallet` feature enabled, `Store` implements BDK's async wallet persistence API. Replace the descriptor strings below with valid descriptors for your wallet.
@@ -65,7 +86,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Options and encryption
 
-`Options::new()` leaves all experimental Turso settings disabled. Enable settings with the provided builder methods. Local at-rest encryption is configured with the publicly re-exported `EncryptionOpts` and `Options::with_encryption`; no separate Cargo feature is required. Supply a 32-byte key as hexadecimal through a secret manager or environment variable, never a committed literal. Keep the same cipher and key to reopen the database; losing the key makes its data inaccessible.
+`Options::new()` leaves all experimental Turso settings disabled. Build the options before opening the store and pass them to `Store::new_with_options`, `Store::new_memory_with_options`, or `Store::new_remote_with_options`; the settings apply while Turso opens the database and cannot be changed on an open store.
+
+### Encryption
+
+Local at-rest encryption is the main option. It is configured with the publicly re-exported `EncryptionOpts` and `Options::with_encryption`; no separate Cargo feature is required. Supply a 32-byte key as hexadecimal through a secret manager or environment variable, never a committed literal. Keep the same cipher and key to reopen the database; losing the key makes its data inaccessible.
 
 ```rust,no_run
 use bdk_turso::{EncryptionOpts, Options, Store};
@@ -83,6 +108,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Local encryption is not supported for remote sync stores, and Turso Cloud encryption does not encrypt the local cache; see [Remote Turso](#remote-turso).
+
+### Other Turso options
+
+The remaining builders gate Turso capabilities that `bdk_turso` does not need for its own schema. Enable only the ones your application uses.
+
+| Builder | Effect |
+| --- | --- |
+| `with_index_method` | Enables Turso's experimental index-method support. |
+| `with_multiprocess_wal` | Allows the same database file to be shared between operating-system processes through Turso's WAL coordinator. |
+| `with_vacuum` | Makes `VACUUM` available; it does not run vacuuming automatically. |
+| `with_attach` | Enables `ATTACH DATABASE` and `DETACH DATABASE`. |
+| `with_generated_columns` | Enables generated columns in application SQL; it does not alter the wallet schema. |
+| `with_without_rowid` | Enables `WITHOUT ROWID` table definitions. |
+| `with_mvcc_passive_checkpoint` | Enables Turso's experimental passive-checkpoint behavior for MVCC databases; it does not start a checkpoint. |
+
+```rust,no_run
+use bdk_turso::{Options, Store};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = Options::new().with_attach().with_generated_columns();
+    let store = Store::new_with_options("wallet.sqlite", options).await?;
+    store.migrate().await?;
+    Ok(())
+}
+```
+
+Local at-rest encryption and `with_mvcc_passive_checkpoint` are rejected by remote sync stores with an error. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
+
+## PSBT persistence
+
+Enable the `psbt` feature to store partially signed transactions. It provides `Store::write_psbt` and `Store::read_psbt` and is independent of the `wallet` feature; `Store::migrate()` creates the `psbt` table only when the feature is enabled.
+
+A PSBT is keyed by the txid of its unsigned transaction, and the complete PSBT is serialized, including signing metadata. Writing another PSBT for the same unsigned transaction replaces the stored one and returns that txid. `Store::read_psbt` returns `Ok(None)` when nothing is stored for the txid.
+
+```rust,ignore
+use bdk_turso::Store;
+
+let txid = store.write_psbt(&psbt).await?;
+let stored = store.read_psbt(txid).await?;
+assert_eq!(stored.as_ref(), Some(&psbt));
+```
+
+This lets an unsigned PSBT survive a restart, be signed later, and be written back under the same unsigned txid. The `transaction` example builds, reloads, verifies, signs, and broadcasts a PSBT this way; see [Examples](#examples). PSBT writes follow the [persistence conflict behavior](#persistence-conflict-behavior) described below.
 
 ## Persistence conflict behavior
 
@@ -119,7 +188,7 @@ Local at-rest encryption and MVCC passive checkpointing are not supported by Tur
 | Feature | Description |
 | --- | --- |
 | `wallet` | Enables wallet-specific tables and the `AsyncWalletPersister` implementation. |
-| `psbt` | Enables the PSBT table and storage methods; independent of `wallet`. |
+| `psbt` | Enables the PSBT table and the `write_psbt`/`read_psbt` storage methods; independent of `wallet`. |
 | `remote` | Enables Turso Cloud sync with a local cache. |
 
 ## Minimum Supported Rust Version (MSRV)
