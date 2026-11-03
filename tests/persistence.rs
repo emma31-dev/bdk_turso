@@ -1,6 +1,6 @@
 #![cfg(feature = "wallet")]
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use bdk_chain::{
     BlockId, ConfirmationBlockTime, DescriptorExt, Merge,
@@ -17,6 +17,51 @@ use bdk_wallet::{ChangeSet, KeychainKind, Wallet, locked_outpoints};
 
 const EXTERNAL_DESCRIPTOR: &str = "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewbwnNpPp5DvXFRKt68ioPoyJDY752cNHKkFxPWqkqCyCf4hxrEfpuxh46QisehL3m8Bi6MsAv394QVLopwbtfvryFQNUH/0/*)#g0w0ymmw";
 const INTERNAL_DESCRIPTOR: &str = "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewbwnNpPp5DvXFRKt68ioPoyJDY752cNHKkFxPWqkqCyCf4hxrEfpuxh46QisehL3m8Bi6MsAv394QVLopwbtfvryFQNUH/1/*)#emtwewtk";
+
+#[cfg(feature = "blocking")]
+fn open_store(path: &Path) -> anyhow::Result<Store> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    Ok(runtime.block_on(Store::new(
+        path.to_str().expect("temporary path is valid UTF-8"),
+    ))?)
+}
+
+#[cfg(feature = "blocking")]
+#[test]
+fn wallet_persister_persists_wallet_changeset() {
+    bdk_wallet::persist_test_utils::persist_wallet_changeset("wallet.db", open_store);
+}
+
+#[cfg(feature = "blocking")]
+#[test]
+fn wallet_persister_persists_multiple_wallet_changesets() {
+    // A `Store` holds one wallet, so each of the two stores gets its own database file.
+    bdk_wallet::persist_test_utils::persist_multiple_wallet_changesets("wallet.db", |path| {
+        let first = path.with_file_name("first.db");
+        let second = path.with_file_name("second.db");
+        Ok((open_store(&first)?, open_store(&second)?))
+    });
+}
+
+#[cfg(feature = "blocking")]
+#[test]
+fn wallet_persister_persists_network() {
+    bdk_wallet::persist_test_utils::persist_network("wallet.db", open_store);
+}
+
+#[cfg(feature = "blocking")]
+#[test]
+fn wallet_persister_persists_keychains() {
+    bdk_wallet::persist_test_utils::persist_keychains("wallet.db", open_store);
+}
+
+#[cfg(feature = "blocking")]
+#[test]
+fn wallet_persister_persists_single_keychain() {
+    bdk_wallet::persist_test_utils::persist_single_keychain("wallet.db", open_store);
+}
 
 #[tokio::test]
 async fn store_opens_with_experimental_options() -> anyhow::Result<()> {
