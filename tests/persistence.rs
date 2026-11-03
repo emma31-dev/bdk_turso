@@ -12,7 +12,7 @@ use bdk_chain::{
     miniscript::descriptor::{Descriptor, DescriptorPublicKey},
     tx_graph,
 };
-use bdk_turso::{EncryptionOpts, Options, Store};
+use bdk_turso::{EncryptionOpts, Options, Store, generate_encryption_opts};
 use bdk_wallet::{ChangeSet, KeychainKind, Wallet, locked_outpoints};
 
 const EXTERNAL_DESCRIPTOR: &str = "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewbwnNpPp5DvXFRKt68ioPoyJDY752cNHKkFxPWqkqCyCf4hxrEfpuxh46QisehL3m8Bi6MsAv394QVLopwbtfvryFQNUH/0/*)#g0w0ymmw";
@@ -119,6 +119,24 @@ async fn encrypted_file_is_not_readable_by_bdk_sqlite() -> anyhow::Result<()> {
             "bdk_sqlite unexpectedly read an encrypted Turso database"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn encrypted_file_round_trips_changeset() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("encrypted.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let options = Options::new().with_encryption(generate_encryption_opts());
+    let expected = full_changeset(23);
+
+    let store = Store::new_with_options(path, options.clone()).await?;
+    store.migrate().await?;
+    store.write_changeset(&expected).await?;
+    drop(store);
+
+    let store = Store::new_with_options(path, options).await?;
+    assert_eq!(store.read_changeset().await?, expected);
     Ok(())
 }
 
