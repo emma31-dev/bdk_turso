@@ -113,6 +113,8 @@ Each blocking call runs on a dedicated thread with its own Tokio runtime, so it 
 
 Local at-rest encryption is the main option. It is configured with the publicly re-exported `EncryptionOpts` and `Options::with_encryption`; no separate Cargo feature is required. Supply a 32-byte key as hexadecimal through a secret manager or environment variable, never a committed literal. Keep the same cipher and key to reopen the database; losing the key makes its data inaccessible.
 
+`generate_encryption_opts()` builds options for a new database: it sets `cipher` to `aes256gcm` and fills `hexkey` with a random 32-byte key. Store that hex key safely before opening the database and reuse it to reopen it.
+
 ```rust,no_run
 use bdk_turso::{EncryptionOpts, Options, Store};
 

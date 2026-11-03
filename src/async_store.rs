@@ -8,6 +8,7 @@ use std::{fmt, sync::Arc};
 use bdk_chain::{
     BlockId, ConfirmationBlockTime, DescriptorId, bitcoin, keychain_txout, local_chain, tx_graph,
 };
+use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxOut, Txid, consensus};
 pub use turso::EncryptionOpts;
 #[cfg(feature = "remote")]
@@ -141,6 +142,27 @@ impl Options {
     ) -> Self {
         self.remote_encryption = Some((base64_key.into(), cipher));
         self
+    }
+}
+
+/// Generate local encryption options with a random 32-byte key and the `aes256gcm` cipher.
+///
+/// Save the returned `hexkey` in a secret manager before opening the database, and reuse these
+/// options to reopen it; losing the key makes the data inaccessible.
+///
+/// ```
+/// use bdk_turso::{Options, generate_encryption_opts};
+///
+/// let encryption = generate_encryption_opts();
+/// assert_eq!(encryption.cipher, "aes256gcm");
+/// assert_eq!(encryption.hexkey.len(), 64);
+/// let options = Options::new().with_encryption(encryption);
+/// ```
+pub fn generate_encryption_opts() -> EncryptionOpts {
+    let key: [u8; 32] = rand::random();
+    EncryptionOpts {
+        cipher: "aes256gcm".to_owned(),
+        hexkey: key.as_slice().to_lower_hex_string(),
     }
 }
 
@@ -965,6 +987,17 @@ mod test {
         assert!(options.encryption.is_none());
         #[cfg(feature = "remote")]
         assert!(options.remote_encryption.is_none());
+    }
+
+    #[test]
+    fn generated_encryption_opts_use_a_random_aes256gcm_key() {
+        let first = generate_encryption_opts();
+        let second = generate_encryption_opts();
+
+        assert_eq!(first.cipher, "aes256gcm");
+        assert_eq!(first.hexkey.len(), 64);
+        assert!(first.hexkey.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_ne!(first.hexkey, second.hexkey);
     }
 
     #[cfg(feature = "remote")]

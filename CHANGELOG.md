@@ -6,6 +6,7 @@ Notable changes to `bdk_turso` are documented here.
 
 ### Added
 
+- `generate_encryption_opts()` creates local encryption options with a random 32-byte key and the default `aes256gcm` cipher.
 - `Store` implements BDK's blocking `WalletPersister` behind the new `blocking` feature, which `wallet` enables by default. Blocking calls run on a dedicated thread with a fresh Tokio runtime, so they are safe inside an async runtime.
 - `Store::migrate_to` copies persisted tables and rows to another store, including between in-memory and file stores. Source rows replace conflicting destination rows, while destination-only rows remain.
 - Public `Store::push()` lets callers retry remote uploads; `Error::RemotePush` identifies a failed upload after local commit.
