@@ -12,6 +12,7 @@ readme = "README.md"
 bdk_chain = { version = "0.23.3", features = ["miniscript"] }
 bdk_wallet = { version = "3.0.0", optional = true }
 turso = { version = "0.8.3", default-features = false, features = ["pure-rust-crypto"] }
+tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
 # Use branches' std implementation instead of the incompatible nightly intrinsic path in Turso's dependency graph.
 branches = { version = "0.4.6", default-features = false, features = ["std"] }
 
@@ -24,7 +25,8 @@ tokio = { version = "1", features = ["full"] }
 
 [features]
 default = ["wallet"]
-wallet = ["dep:bdk_wallet"]
+wallet = ["dep:bdk_wallet", "blocking"]
+blocking = ["dep:tokio"]
 psbt = []
 remote = ["turso/sync"]
 

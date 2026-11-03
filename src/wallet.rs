@@ -1,5 +1,5 @@
-//! [`AsyncWalletPersister`] implementation for [`Store`], plus helpers for reading and writing
-//! the individual wallet changeset components.
+//! [`AsyncWalletPersister`] and [`WalletPersister`] implementations for [`Store`], plus helpers for
+//! reading and writing the individual wallet changeset components.
 
 use std::{collections::BTreeMap, future::Future, pin::Pin, str::FromStr};
 
@@ -9,6 +9,9 @@ use bdk_wallet::{AsyncWalletPersister, ChangeSet, KeychainKind, locked_outpoints
 use bitcoin::{Network, OutPoint};
 use miniscript::descriptor::{Descriptor, DescriptorPublicKey};
 use turso::transaction::Transaction as DatabaseTransaction;
+
+#[cfg(feature = "blocking")]
+use bdk_wallet::WalletPersister;
 
 use crate::{Error, Store};
 
@@ -265,6 +268,30 @@ impl Store {
 
 type FutureResult<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
+/// Drive `future` to completion on a dedicated thread with its own Tokio runtime.
+///
+/// Blocking on the calling thread would deadlock or panic when that thread is already running an
+/// async runtime, so the wait happens on a scoped helper thread instead.
+#[cfg(feature = "blocking")]
+fn block_on<F, T>(future: F) -> T
+where
+    F: Future<Output = T> + Send,
+    T: Send,
+{
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build a Tokio runtime")
+                    .block_on(future)
+            })
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
+
 impl AsyncWalletPersister for Store {
     type Error = Error;
 
@@ -289,6 +316,22 @@ impl AsyncWalletPersister for Store {
     }
 }
 
+#[cfg(feature = "blocking")]
+impl WalletPersister for Store {
+    type Error = Error;
+
+    fn initialize(persister: &mut Self) -> Result<ChangeSet, Self::Error> {
+        block_on(async {
+            persister.migrate().await?;
+            persister.read_changeset().await
+        })
+    }
+
+    fn persist(persister: &mut Self, changeset: &ChangeSet) -> Result<(), Self::Error> {
+        block_on(persister.write_changeset(changeset))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -307,6 +350,25 @@ mod test {
         let count: i64 = row.get(0)?;
         assert_eq!(count, 1, "network table should have at most 1 row");
         assert_eq!(store.read_network().await?, Some(Network::Signet));
+        Ok(())
+    }
+
+    #[cfg(feature = "blocking")]
+    #[tokio::test]
+    async fn blocking_persister_round_trips_inside_async_context() -> anyhow::Result<()> {
+        let mut store = Store::new_memory().await?;
+        assert_eq!(
+            WalletPersister::initialize(&mut store)?,
+            ChangeSet::default()
+        );
+
+        let changeset = ChangeSet {
+            network: Some(Network::Regtest),
+            ..Default::default()
+        };
+        WalletPersister::persist(&mut store, &changeset)?;
+
+        assert_eq!(store.read_changeset().await?, changeset);
         Ok(())
     }
 }

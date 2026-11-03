@@ -84,6 +84,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Blocking persistence
+
+`wallet` enables the `blocking` feature by default, so `Store` also implements BDK's blocking `WalletPersister` and the non-async `load_wallet` and `create_wallet` APIs work too:
+
+```rust,no_run
+use bdk_turso::Store;
+use bdk_wallet::{bitcoin::Network, KeychainKind, Wallet};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = Store::new("wallet.sqlite").await?;
+    let _wallet = Wallet::load()
+        .descriptor(KeychainKind::External, Some("wpkh(...)"))
+        .check_network(Network::Regtest)
+        .load_wallet(&mut store)?;
+    Ok(())
+}
+```
+
+Each blocking call runs on a dedicated thread with its own Tokio runtime, so it is safe to call from inside an async runtime. It still blocks the calling thread until the operation finishes, so prefer the async persister on async hot paths.
+
 ## Options and encryption
 
 `Options::new()` leaves all experimental Turso settings disabled. Build the options before opening the store and pass them to `Store::new_with_options`, `Store::new_memory_with_options`, or `Store::new_remote_with_options`; the settings apply while Turso opens the database and cannot be changed on an open store.
@@ -187,7 +208,8 @@ Local at-rest encryption and MVCC passive checkpointing are not supported by Tur
 
 | Feature | Description |
 | --- | --- |
-| `wallet` | Enables wallet-specific tables and the `AsyncWalletPersister` implementation. |
+| `wallet` | Enables wallet-specific tables, the `AsyncWalletPersister` implementation, and (through `blocking`) the blocking `WalletPersister`. |
+| `blocking` | Implements the blocking `WalletPersister` for `Store`. Enabled by default by `wallet`. |
 | `psbt` | Enables the PSBT table and the `write_psbt`/`read_psbt` storage methods; independent of `wallet`. |
 | `remote` | Enables Turso Cloud sync with a local cache. |
 
