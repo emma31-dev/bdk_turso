@@ -43,7 +43,7 @@ Or declare it directly in `Cargo.toml`:
 
 ```toml
 [dependencies]
-bdk_turso = { version = "0.2", features = ["wallet", "psbt"] }
+bdk_turso = { version = "0.3", features = ["wallet", "psbt"] }
 ```
 
 Open a store and call `Store::migrate()` before reading or writing; tables for disabled features are not created. See [Feature flags](#feature-flags) for the full list.

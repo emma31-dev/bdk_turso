@@ -4,6 +4,8 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+## [0.3.0]
+
 ### Added
 
 - `generate_encryption_opts()` creates local encryption options with a random 32-byte key and the default `aes256gcm` cipher.
