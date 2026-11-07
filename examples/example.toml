@@ -10,6 +10,11 @@ network = "regtest"
 # Optional. Required only when the transaction example sends a payment.
 # recipient_address = "bcrt1q..."
 
+# Optional for the wallet example. Required for the transaction example, because PSBT persistence
+# is rejected on unencrypted databases. 64 hexadecimal characters (32 bytes); generate one with
+# `openssl rand -hex 32`. A database created without this key cannot later be opened with it.
+# encryption_hexkey = "..."
+
 [rpc]
 # Default endpoint for a local Polar regtest network.
 url = "http://127.0.0.1:18443"

@@ -8,6 +8,10 @@ Notable changes to `bdk_turso` are documented here.
 
 - The wallet and transaction examples now load settings from a shared `examples/config.toml`. `examples/example.toml` is the committed template; the local file is ignored by git, and a missing or invalid configuration stops with an actionable error.
 
+### Fixed
+
+- PSBT persistence now fails closed with `Error::PsbtRequiresEncryption` unless the store was opened with local at-rest encryption. Stores without encryption, stores created with unknown opening options, and remote stores are rejected.
+
 ## [0.3.0]
 
 ### Added

@@ -101,6 +101,41 @@ fn debug_redacts_rpc_password() -> anyhow::Result<()> {
 }
 
 #[test]
+fn encryption_key_is_optional_for_wallet_example() -> anyhow::Result<()> {
+    let config = Config::load_from(&template_path())?;
+
+    assert!(config.store_options().is_ok());
+    let error = config.encrypted_store_options().unwrap_err().to_string();
+    assert!(error.contains("encryption_hexkey is required"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn invalid_encryption_key_is_rejected() -> anyhow::Result<()> {
+    let dir = config_with((
+        "# encryption_hexkey = \"...\"",
+        "encryption_hexkey = \"zz\"",
+    ))?;
+
+    let error = Config::load_from(&dir.path().join("config.toml"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("invalid `encryption_hexkey`"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn valid_encryption_key_is_accepted() -> anyhow::Result<()> {
+    let key = "0".repeat(64);
+    let replacement = format!("encryption_hexkey = \"{key}\"");
+    let dir = config_with(("# encryption_hexkey = \"...\"", &replacement))?;
+    let config = Config::load_from(&dir.path().join("config.toml"))?;
+
+    assert!(config.encrypted_store_options().is_ok());
+    Ok(())
+}
+
+#[test]
 fn malformed_toml_is_rejected() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("config.toml");

@@ -10,7 +10,8 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
+use bdk_turso::{EncryptionOpts, Options};
 use bdk_wallet::{
     bitcoin::{Address, Network, secp256k1::Secp256k1},
     descriptor::IntoWalletDescriptor,
@@ -25,6 +26,7 @@ pub struct Config {
     pub rpc: RpcConfig,
     pub descriptors: DescriptorConfig,
     pub recipient_address: Option<String>,
+    pub encryption_hexkey: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -103,7 +105,32 @@ impl Config {
                     format!("`recipient_address` is not valid on {network}: {value}")
                 })?;
         }
+        if let Some(hexkey) = self.encryption_hexkey.as_deref() {
+            validate_hexkey(hexkey)?;
+        }
         Ok(())
+    }
+
+    /// Turso options for the wallet example; adds local encryption when a key is configured.
+    pub fn store_options(&self) -> Result<Options> {
+        match self.encryption_hexkey.as_deref() {
+            Some(hexkey) => Ok(Options::new().with_encryption(EncryptionOpts {
+                cipher: "aes256gcm".to_owned(),
+                hexkey: validate_hexkey(hexkey)?.to_owned(),
+            })),
+            None => Ok(Options::new()),
+        }
+    }
+
+    /// Turso options for the transaction example, which stores PSBTs and therefore needs encryption.
+    #[allow(dead_code)] // Used by the transaction example only.
+    pub fn encrypted_store_options(&self) -> Result<Options> {
+        if self.encryption_hexkey.is_none() {
+            bail!(
+                "encryption_hexkey is required in examples/config.toml because the transaction example stores PSBTs"
+            );
+        }
+        self.store_options()
     }
 
     pub fn network(&self) -> Result<Network> {
@@ -125,4 +152,11 @@ impl Config {
             .require_network(network)
             .with_context(|| format!("recipient_address `{value}` is not valid on {network}"))
     }
+}
+
+fn validate_hexkey(hexkey: &str) -> Result<&str> {
+    if hexkey.len() != 64 || !hexkey.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("invalid `encryption_hexkey` in config; expected 64 hexadecimal characters");
+    }
+    Ok(hexkey)
 }

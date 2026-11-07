@@ -925,8 +925,16 @@ impl Store {
     ///
     /// Writing another PSBT with the same unsigned transaction ID replaces the previous one. The
     /// complete PSBT, including signing metadata, is serialized. Run [`Store::migrate`] first.
+    ///
+    /// PSBTs can contain partial signatures, so persistence requires a database opened with local
+    /// at-rest encryption. Remote sync stores are an exception: their local cache is not encrypted
+    /// by Turso Cloud settings, so PSBT persistence is permitted there without local encryption.
+    /// Stores created without `Options::with_encryption`, stores created by
+    /// [`Store::from_database`] whose opening options are unknown, and local stores without
+    /// encryption return [`Error::PsbtRequiresEncryption`].
     #[cfg(feature = "psbt")]
     pub async fn write_psbt(&self, psbt: &bitcoin::Psbt) -> Result<bitcoin::Txid, Error> {
+        self.require_encryption()?;
         let txid = psbt.unsigned_tx.compute_txid();
         let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
@@ -944,9 +952,12 @@ impl Store {
     /// Load the PSBT stored for an unsigned transaction ID.
     ///
     /// Returns `Ok(None)` when no PSBT is stored for `txid`. This method opens and commits its own
-    /// read transaction. Run [`Store::migrate`] first.
+    /// read transaction. Run [`Store::migrate`] first. Like [`Store::write_psbt`], this requires a
+    /// store opened with local at-rest encryption, except for remote sync stores whose local cache
+    /// is not encrypted by Turso Cloud settings.
     #[cfg(feature = "psbt")]
     pub async fn read_psbt(&self, txid: bitcoin::Txid) -> Result<Option<bitcoin::Psbt>, Error> {
+        self.require_encryption()?;
         let mut conn = self.connect().await?;
         let txn = conn.transaction().await?;
         let mut rows = txn
@@ -965,6 +976,22 @@ impl Store {
             .transpose()?;
         txn.commit().await?;
         Ok(psbt)
+    }
+
+    /// PSBT persistence requires local at-rest encryption, except for remote sync stores whose
+    /// local cache is not encrypted by Turso Cloud settings.
+    #[cfg(feature = "psbt")]
+    fn require_encryption(&self) -> Result<(), Error> {
+        #[cfg(feature = "remote")]
+        {
+            if matches!(&self.database, StoreDatabase::Remote(_)) {
+                return Ok(());
+            }
+        }
+        match self.options.as_ref() {
+            Some(options) if options.encryption.is_some() => Ok(()),
+            _ => Err(Error::PsbtRequiresEncryption),
+        }
     }
 }
 

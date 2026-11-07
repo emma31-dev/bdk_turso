@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
         Auth::UserPass(config.rpc.user.clone(), config.rpc.password.clone()),
     )?;
 
-    let mut store = Store::new(&config.database_path).await?;
+    let mut store = Store::new_with_options(&config.database_path, config.store_options()?).await?;
     let mut wallet = match Wallet::load()
         .descriptor(
             KeychainKind::External,
