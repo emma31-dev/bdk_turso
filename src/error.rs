@@ -19,6 +19,9 @@ pub enum Error {
     Miniscript(miniscript::Error),
     /// A persisted PSBT could not be decoded.
     Psbt(bitcoin::psbt::Error),
+    /// A PSBT read or write was attempted on a store without local at-rest encryption,
+    /// unless the store is a remote sync store whose local cache is not encrypted.
+    PsbtRequiresEncryption,
     /// The stored network name could not be parsed as a Bitcoin network.
     ParseNetwork(ParseNetworkError),
     /// A store-to-store transfer could not safely copy the source schema or data.
@@ -41,6 +44,10 @@ impl fmt::Display for Error {
             Self::HexToArray(e) => write!(f, "Hex Decode Error: {e}"),
             Self::Miniscript(e) => write!(f, "Miniscript Error: {e}"),
             Self::Psbt(e) => write!(f, "PSBT Error: {e}"),
+            Self::PsbtRequiresEncryption => write!(
+                f,
+                "PSBT persistence requires a database opened with local at-rest encryption"
+            ),
             Self::ParseNetwork(e) => write!(f, "Network Parse Error: {e}"),
             #[cfg(feature = "remote")]
             Self::UnsupportedOption(message) => write!(f, "Unsupported Option Error: {message}"),

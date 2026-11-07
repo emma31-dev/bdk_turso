@@ -395,9 +395,20 @@ async fn single_keychain_changeset_round_trips() -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "psbt")]
+fn encrypted_options() -> Options {
+    Options::new().with_encryption(EncryptionOpts {
+        cipher: "aes256gcm".to_owned(),
+        hexkey: "00".repeat(32),
+    })
+}
+
+#[cfg(feature = "psbt")]
 #[tokio::test]
 async fn psbt_round_trips_by_unsigned_txid() -> anyhow::Result<()> {
-    let store = Store::new_memory().await?;
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("psbt.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let store = Store::new_with_options(path, encrypted_options()).await?;
     store.migrate().await?;
     let psbt = bdk_wallet::bitcoin::Psbt::from_unsigned_tx((*transaction(30)).clone())?;
     let txid = store.write_psbt(&psbt).await?;
@@ -410,6 +421,24 @@ async fn psbt_round_trips_by_unsigned_txid() -> anyhow::Result<()> {
             .await?
             .is_none()
     );
+    Ok(())
+}
+
+#[cfg(feature = "psbt")]
+#[tokio::test]
+async fn psbt_persistence_requires_encryption() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    store.migrate().await?;
+    let psbt = bdk_wallet::bitcoin::Psbt::from_unsigned_tx((*transaction(32)).clone())?;
+
+    assert!(matches!(
+        store.write_psbt(&psbt).await,
+        Err(bdk_turso::Error::PsbtRequiresEncryption)
+    ));
+    assert!(matches!(
+        store.read_psbt(psbt.unsigned_tx.compute_txid()).await,
+        Err(bdk_turso::Error::PsbtRequiresEncryption)
+    ));
     Ok(())
 }
 
@@ -505,7 +534,7 @@ async fn concurrent_file_wallet_and_psbt_writes_succeed() -> anyhow::Result<()> 
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("concurrent.db");
     let path = path.to_str().expect("temporary path is valid UTF-8");
-    let store = Store::new(path).await?;
+    let store = Store::new_with_options(path, encrypted_options()).await?;
     store.migrate().await?;
 
     let changeset = full_changeset(50);

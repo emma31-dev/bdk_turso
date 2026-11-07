@@ -166,6 +166,8 @@ Enable the `psbt` feature to store partially signed transactions. It provides `S
 
 A PSBT is keyed by the txid of its unsigned transaction, and the complete PSBT is serialized, including signing metadata. Writing another PSBT for the same unsigned transaction replaces the stored one and returns that txid. `Store::read_psbt` returns `Ok(None)` when nothing is stored for the txid.
 
+PSBTs can contain partial signatures, so persistence fails closed on unencrypted databases. Both methods return `Error::PsbtRequiresEncryption` unless the store was opened with `Options::with_encryption`. Stores created without encryption, stores wrapped with `Store::from_database` (whose opening options are unknown), and remote stores (whose local cache is not encrypted) are rejected.
+
 ```rust,ignore
 use bdk_turso::Store;
 
@@ -188,10 +190,10 @@ Both examples read `examples/config.toml`. Copy the committed template and edit 
 cp examples/example.toml examples/config.toml
 ```
 
-`examples/config.toml` is ignored by git, so credentials stay out of the repository. Set the database path, network, Bitcoin Core RPC URL and credentials, external and internal descriptors, and optionally a recipient address. The template ships regtest-only sample keys; replace them before using another network. If the file is missing or invalid, the examples stop with an error explaining how to create it and which value is wrong.
+`examples/config.toml` is ignored by git, so credentials stay out of the repository. Set the database path, network, Bitcoin Core RPC URL and credentials, external and internal descriptors, and optionally a recipient address. Add `encryption_hexkey` (64 hexadecimal characters) to open the database with local at-rest encryption; it is required by the transaction example because PSBT persistence is rejected on unencrypted databases. The template ships regtest-only sample keys; replace them before using another network. A database created without encryption cannot later be opened with a key. If the file is missing or invalid, the examples stop with an error explaining how to create it and which value is wrong.
 
 - `cargo run --example wallet` loads the config, creates or loads the wallet, reveals a receive address, and syncs with a local Bitcoin Core regtest node.
-- `cargo run --features psbt --example transaction` syncs a regtest wallet, stores and reloads an unsigned PSBT, confirms it round-trips, signs it, broadcasts it, and persists the resulting wallet changeset. `recipient_address` is optional until this example reaches the send step; if the wallet has no spendable funds, it prints a receive address fund it, mine 101 blocks, then rerun.
+- `cargo run --features psbt --example transaction` syncs a regtest wallet, stores and reloads an unsigned PSBT, confirms it round-trips, signs it, broadcasts it, and persists the resulting wallet changeset. It requires `encryption_hexkey`. `recipient_address` is optional until this example reaches the send step; if the wallet has no spendable funds, it prints a receive address — fund it, mine 101 blocks, then rerun.
 
 ## Remote Turso
 
