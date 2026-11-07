@@ -3,3 +3,4 @@ test.db
 test.db-wal
 polar.db
 polar.db-wal
+examples/config.toml

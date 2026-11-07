@@ -1,7 +1,6 @@
-use std::{
-    str::FromStr,
-    time::{SystemTime, UNIX_EPOCH},
-};
+mod common;
+
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bdk_bitcoind_rpc::{
     Emitter,
@@ -10,39 +9,45 @@ use bdk_bitcoind_rpc::{
 use bdk_turso::Store;
 use bdk_wallet::{
     KeychainKind, SignOptions, Wallet,
-    bitcoin::{Address, Amount, FeeRate, Network},
+    bitcoin::{Amount, FeeRate},
 };
-
-const DB_PATH: &str = "polar.db";
-const NETWORK: Network = Network::Regtest;
-const RPC_URL: &str = "http://127.0.0.1:18443";
-const EXTERNAL_DESC: &str = "wpkh([dae5422f/84'/1'/0'/0]tprv8iPUhjo2Rrs6maF8A3EuTbp8JxxtsuHU4Fwfdk6Qz74G4HqBwy38rpfwKpGyunHdTqxig4kMScbiTFf5h1NmekZfiVNeHEPrwESWMCLU2B8/*)";
-const INTERNAL_DESC: &str = "wpkh([dae5422f/84'/1'/0'/1]tprv8iPUhjo2Rrs6oiZHqEo3GdtJhHXy3uyFGPg7VaFehs4PhAGiivUG7XHWsdK6W7G1VygXkuJ1Cau5mV6uiy7EfviZkHcAg7a4yyYoJpV59Ub/*)";
+use common::Config;
 
 // This uses BDK 3.0's deprecated wallet-owned signer for a regtest-only demonstration.
 #[allow(deprecated)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let rpc_url = std::env::var("POLAR_RPC_URL").unwrap_or_else(|_| RPC_URL.to_owned());
-    let rpc_user = std::env::var("POLAR_RPC_USER")?;
-    let rpc_pass = std::env::var("POLAR_RPC_PASS")?;
-    let rpc = Client::new(&rpc_url, Auth::UserPass(rpc_user, rpc_pass))?;
+    let config = Config::load()?;
+    let network = config.network()?;
+    let rpc = Client::new(
+        &config.rpc.url,
+        Auth::UserPass(config.rpc.user.clone(), config.rpc.password.clone()),
+    )?;
 
-    let mut store = Store::new(DB_PATH).await?;
+    let mut store = Store::new(&config.database_path).await?;
     let mut wallet = match Wallet::load()
-        .descriptor(KeychainKind::External, Some(EXTERNAL_DESC))
-        .descriptor(KeychainKind::Internal, Some(INTERNAL_DESC))
+        .descriptor(
+            KeychainKind::External,
+            Some(config.descriptors.external.clone()),
+        )
+        .descriptor(
+            KeychainKind::Internal,
+            Some(config.descriptors.internal.clone()),
+        )
         .extract_keys()
-        .check_network(NETWORK)
+        .check_network(network)
         .load_wallet_async(&mut store)
         .await?
     {
         Some(wallet) => wallet,
         None => {
-            Wallet::create(EXTERNAL_DESC, INTERNAL_DESC)
-                .network(NETWORK)
-                .create_wallet_async(&mut store)
-                .await?
+            Wallet::create(
+                config.descriptors.external.clone(),
+                config.descriptors.internal.clone(),
+            )
+            .network(network)
+            .create_wallet_async(&mut store)
+            .await?
         }
     };
 
@@ -75,8 +80,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let recipient =
-        Address::from_str(&std::env::var("RECIPIENT_ADDRESS")?)?.require_network(NETWORK)?;
+    let recipient = config.recipient_address(network)?;
     let mut builder = wallet.build_tx();
     builder
         .add_recipient(recipient.script_pubkey(), Amount::from_sat(10_000))

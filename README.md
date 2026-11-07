@@ -182,10 +182,16 @@ This lets an unsigned PSBT survive a restart, be signed later, and be written ba
 
 ## Examples
 
-- `cargo run --example wallet` syncs a wallet with a local Bitcoin Core regtest node.
-- `cargo run --features psbt --example transaction` syncs a regtest wallet, stores and reloads an unsigned PSBT, confirms it matches, signs and broadcasts it, and persists the resulting wallet changeset. It requires `POLAR_RPC_USER`, `POLAR_RPC_PASS`, and a regtest `RECIPIENT_ADDRESS`. If the wallet has no spendable funds, it prints a receive address; fund it and mine 101 blocks before rerunning.
+Both examples read `examples/config.toml`. Copy the committed template and edit the local copy:
 
-Both examples requires Polar.
+```sh
+cp examples/example.toml examples/config.toml
+```
+
+`examples/config.toml` is ignored by git, so credentials stay out of the repository. Set the database path, network, Bitcoin Core RPC URL and credentials, external and internal descriptors, and optionally a recipient address. The template ships regtest-only sample keys; replace them before using another network. If the file is missing or invalid, the examples stop with an error explaining how to create it and which value is wrong.
+
+- `cargo run --example wallet` loads the config, creates or loads the wallet, reveals a receive address, and syncs with a local Bitcoin Core regtest node.
+- `cargo run --features psbt --example transaction` syncs a regtest wallet, stores and reloads an unsigned PSBT, confirms it round-trips, signs it, broadcasts it, and persists the resulting wallet changeset. `recipient_address` is optional until this example reaches the send step; if the wallet has no spendable funds, it prints a receive address fund it, mine 101 blocks, then rerun.
 
 ## Remote Turso
 

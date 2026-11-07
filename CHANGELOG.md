@@ -4,6 +4,10 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- The wallet and transaction examples now load settings from a shared `examples/config.toml`. `examples/example.toml` is the committed template; the local file is ignored by git, and a missing or invalid configuration stops with an actionable error.
+
 ## [0.3.0]
 
 ### Added
