@@ -1,0 +1,22 @@
+# Copy this file to examples/config.toml and edit the copy.
+# examples/config.toml is ignored by git, so local credentials are not committed.
+
+# Database file used by both examples.
+database_path = "polar.db"
+
+# One of: bitcoin, testnet, testnet4, signet, regtest.
+network = "regtest"
+
+# Optional. Required only when the transaction example sends a payment.
+# recipient_address = "bcrt1q..."
+
+[rpc]
+# Default endpoint for a local Polar regtest network.
+url = "http://127.0.0.1:18443"
+user = "polaruser"
+password = "polarpassword"
+
+[descriptors]
+# Regtest-only sample keys. Replace them before using another network.
+external = "wpkh([dae5422f/84'/1'/0'/0]tprv8iPUhjo2Rrs6maF8A3EuTbp8JxxtsuHU4Fwfdk6Qz74G4HqBwy38rpfwKpGyunHdTqxig4kMScbiTFf5h1NmekZfiVNeHEPrwESWMCLU2B8/*)"
+internal = "wpkh([dae5422f/84'/1'/0'/1]tprv8iPUhjo2Rrs6oiZHqEo3GdtJhHXy3uyFGPg7VaFehs4PhAGiivUG7XHWsdK6W7G1VygXkuJ1Cau5mV6uiy7EfviZkHcAg7a4yyYoJpV59Ub/*)"
