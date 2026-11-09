@@ -4,6 +4,10 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Reproducible benchmark suite comparing `bdk_turso`, `bdk_sqlite`, and `bdk_redb` on wallet changeset reads and writes, concurrent writes at several writer counts, database opening, and on-disk storage. Sample and batch sizes, writer counts, dataset shape, Turso options, and enabled backends are configurable through an optional `benches/config.toml` or `--config`. Results are published in [BENCHMARK.md](BENCHMARK.md) and are not run or thresholded in CI.
+
 ### Changed
 
 - The wallet and transaction examples now load settings from a shared `examples/config.toml`. `examples/example.toml` is the committed template; the local file is ignored by git, and a missing or invalid configuration stops with an actionable error.
@@ -11,6 +15,7 @@ Notable changes to `bdk_turso` are documented here.
 ### Fixed
 
 - PSBT persistence now fails closed with `Error::PsbtRequiresEncryption` unless the store was opened with local at-rest encryption. Stores without encryption, stores created with unknown opening options, and remote stores are rejected.
+- Local and remote Turso connections now use a five-second busy timeout. Concurrent writers wait for the write lock instead of failing immediately with a `Busy` error, matching the default behavior of `bdk_sqlite`'s SQLx connections.
 
 ## [0.3.0]
 

@@ -1,0 +1,41 @@
+# Copy this file to benches/config.toml and edit the copy.
+# benches/config.toml is ignored by git, so local settings are not committed.
+# Every setting is optional; omitted values use the defaults shown here.
+
+# Measured samples per workload.
+samples = 30
+# Unmeasured warmup samples before each workload.
+warmup_samples = 5
+
+# Operations per sequential sample.
+write_batch = 10
+read_batch = 50
+# Database opens per sample.
+open_batch = 3
+
+# Rounds per concurrent-write sample.
+concurrent_rounds = 5
+
+# Writer counts measured by the concurrent-write workload.
+# The largest value also sizes the Tokio worker pool.
+writers = [1, 2, 4, 8]
+
+# Distinct changesets persisted for the on-disk storage measurement.
+storage_changesets = 64
+
+[dataset]
+# Shape of every generated wallet changeset.
+transactions = 16
+blocks = 32
+scripts_per_transaction = 8
+locked_outpoints = 8
+
+[turso]
+# Open Turso with its opt-in multi-process WAL mode.
+multiprocess_wal = true
+
+[backends]
+# Include or exclude backends from the run. At least one must be enabled.
+turso = true
+sqlite = true
+redb = true

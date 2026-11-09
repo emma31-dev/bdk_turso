@@ -22,6 +22,7 @@ anyhow = "1"
 bdk_wallet = { version = "3.0.0", features = ["test-utils"] }
 bdk_bitcoind_rpc = "0.22.1"
 bdk_sqlite = "0.6.0"
+bdk_redb = "0.2.0"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
@@ -41,3 +42,8 @@ required-features = ["wallet"]
 [[example]]
 name = "transaction"
 required-features = ["wallet", "psbt"]
+
+[[bench]]
+name = "backends"
+harness = false
+required-features = ["wallet"]

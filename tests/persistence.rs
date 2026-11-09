@@ -528,6 +528,39 @@ async fn concurrent_writes_preserve_both_changesets() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn concurrent_file_writes_wait_for_the_write_lock() -> anyhow::Result<()> {
+    const WRITERS: u8 = 8;
+
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("concurrent-file.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let store = Store::new(path).await?;
+    store.migrate().await?;
+
+    let changesets: Vec<_> = (0..WRITERS)
+        .map(|seed| ChangeSet {
+            tx_graph: graph_changeset(seed),
+            ..Default::default()
+        })
+        .collect();
+    let mut tasks = Vec::with_capacity(usize::from(WRITERS));
+    for changeset in changesets.clone() {
+        let store = store.clone();
+        tasks.push(tokio::spawn(async move {
+            store.write_changeset(&changeset).await
+        }));
+    }
+
+    let mut expected = ChangeSet::default();
+    for (task, changeset) in tasks.into_iter().zip(changesets) {
+        task.await??;
+        expected.merge(changeset);
+    }
+    assert_eq!(store.read_changeset().await?, expected);
+    Ok(())
+}
+
 #[cfg(feature = "psbt")]
 #[tokio::test]
 async fn concurrent_file_wallet_and_psbt_writes_succeed() -> anyhow::Result<()> {
