@@ -23,3 +23,15 @@ cargo check --no-default-features --locked
 ```
 
 Please include the checks you ran in your pull request description, and note any that were not applicable or could not be run.
+
+## Benchmarks
+
+The comparative benchmark suite is not run in CI and has no pass/fail thresholds. To reproduce a published result, run it on a quiet machine:
+
+```sh
+cargo bench --bench backends
+```
+
+Settings such as sample counts, batch sizes, writer counts, dataset shape, Turso options, and enabled backends are read from the optional `benches/config.toml`. Copy `benches/example.toml` to that path to customize a run; the local file is ignored by git.
+
+See [BENCHMARK.md](BENCHMARK.md) for the workload, configuration options, methodology, limitations, and the procedure for publishing results before a release.

@@ -28,11 +28,23 @@
 
 ### Native async persistence
 
-Turso's async-first design allows `bdk_turso` to implement `AsyncWalletPersister` natively rather than wrapping blocking database operations in `spawn_blocking`. Turso is designed to support concurrent write scaling; this project makes no benchmark claims.
+Turso's async-first design allows `bdk_turso` to implement `AsyncWalletPersister` natively rather than wrapping blocking database operations in `spawn_blocking`. Turso is designed to support concurrent write scaling. Connections wait up to five seconds for a contended write lock before returning an error, matching the default used by SQLite drivers. Reproducible comparisons with `bdk_sqlite` and `bdk_redb` are published in [BENCHMARK.md](BENCHMARK.md); results are workload- and machine-dependent and do not imply that one backend is best for every use case.
 
 ### SQLite compatibility
 
 `bdk_turso` stays within Turso's SQLite-compatible feature subset and avoids Turso-only extensions. Unencrypted database files can be read by `bdk_sqlite`; Turso-encrypted files require Turso to open. Do not call `bdk_sqlite::Store::migrate()` on a `bdk_turso` database: it has no SQLx migration history, so `bdk_sqlite` runs migrations containing `DROP TABLE IF EXISTS` statements and erases the existing wallet state.
+
+## Benchmarks
+
+The repository includes a reproducible benchmark suite in [`benches/backends.rs`](benches/backends.rs) that runs the same generated wallet changesets through `bdk_turso`, `bdk_sqlite`, and `bdk_redb`. It measures changeset read and write speed, concurrent writes at several writer counts, opening an existing database, and on-disk storage size. Run it with:
+
+```sh
+cargo bench --bench backends
+```
+
+Sample counts, batch sizes, writer counts, dataset shape, Turso options, and the included backends can be set in an optional `benches/config.toml`; copy `benches/example.toml` to that path and edit it, or pass `-- --config path/to/config.toml`. Without a config file the defaults are used.
+
+Detailed results, environment details, methodology, and limitations are in [BENCHMARK.md](BENCHMARK.md). Results are kept for each measured release and are not CI performance thresholds.
 
 ## Installation
 
