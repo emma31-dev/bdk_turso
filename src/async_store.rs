@@ -3,7 +3,7 @@
 //! [`Store`] owns a Turso database connection pool and exposes methods to migrate the schema and
 //! read or write persisted changesets.
 
-use std::{fmt, sync::Arc};
+use std::{fmt, sync::Arc, time::Duration};
 
 use bdk_chain::{
     BlockId, ConfirmationBlockTime, DescriptorId, bitcoin, keychain_txout, local_chain, tx_graph,
@@ -23,6 +23,12 @@ use crate::Error;
 /// A column as reported by `PRAGMA table_info`: name, declared type, not-null flag, default value,
 /// and primary-key position.
 type TableColumn = (String, String, i64, Value, i64);
+
+/// How long a connection waits for a contended database lock before returning an error.
+///
+/// Turso leaves its busy handler unset by default, so a concurrent writer otherwise fails
+/// immediately with `Busy`. This matches the 5-second default used by `sqlx`'s SQLite driver.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Opt-in Turso features applied when opening a [`Store`].
 ///
@@ -406,11 +412,17 @@ impl Store {
 
     pub(crate) async fn connect(&self) -> Result<Connection, Error> {
         match &self.database {
-            StoreDatabase::Local(database) => Ok(database.connect()?),
+            StoreDatabase::Local(database) => {
+                let connection = database.connect()?;
+                connection.busy_timeout(BUSY_TIMEOUT)?;
+                Ok(connection)
+            }
             #[cfg(feature = "remote")]
             StoreDatabase::Remote(database) => {
                 database.pull().await?;
-                Ok(database.connect().await?)
+                let connection = database.connect().await?;
+                connection.busy_timeout(BUSY_TIMEOUT)?;
+                Ok(connection)
             }
         }
     }
