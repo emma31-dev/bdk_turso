@@ -1,11 +1,18 @@
-# bdk_turso
+<div align="center">
 
-An experimental persistence backend for `bdk_wallet` that stores wallet state in Turso.
+<h1>bdk_turso</h1>
 
-[![Crate Info](https://img.shields.io/crates/v/bdk_turso.svg)](https://crates.io/crates/bdk_turso)
-[![Wallet API Docs](https://img.shields.io/badge/docs.rs-bdk_turso-green)](https://docs.rs/bdk_turso)
-[![CI Status](https://github.com/emma31-dev/bdk_turso/workflows/CI/badge.svg)](https://github.com/emma31-dev/bdk_turso/actions?query=workflow:CI)
-[![MIT or Apache-2.0 Licensed](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
+<p>An experimental persistence backend for <code>bdk_wallet</code> that stores wallet state in Turso.</p>
+
+<p>
+<a href="https://crates.io/crates/bdk_turso"><img src="https://img.shields.io/crates/v/bdk_turso.svg" alt="Crate Info"></a>
+<a href="https://docs.rs/bdk_turso"><img src="https://img.shields.io/badge/docs.rs-bdk_turso-green" alt="Wallet API Docs"></a>
+<a href="https://github.com/emma31-dev/bdk_turso/actions?query=workflow:CI"><img src="https://github.com/emma31-dev/bdk_turso/workflows/CI/badge.svg" alt="CI Status"></a>
+<a href="#license"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="MIT or Apache-2.0 Licensed"></a>
+</p>
+
+</div>
+
 
 ## Project status
 
