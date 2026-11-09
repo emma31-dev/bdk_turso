@@ -77,7 +77,7 @@ impl Config {
                 ));
             }
             Err(error) => {
-                return Err(error).with_context(|| format!("could not read {}", path.display()));
+                return Err(error).context(format!("could not read {}", path.display()));
             }
         };
         let config: Self = toml::from_str(&contents)
