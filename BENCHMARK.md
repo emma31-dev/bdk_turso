@@ -83,8 +83,7 @@ Releases before 0.3.0 were not measured with this suite. No historical figures a
 ### Unreleased (after 0.3.0)
 
 Measured with the default settings that later became the template in `benches/example.toml`.
-The working tree was dirty at commit `6818c3368535b7992445582f60bc44f897b9993a`; the
-changes under test included the busy-timeout fix and the benchmark suite itself.
+The working tree was dirty at commit `6818c3368535b7992445582f60bc44f897b9993a`; the changes under test included the busy-timeout fix and the benchmark suite itself.
 
 Generated on 2026-11-09T07:32:07Z with 30 samples and 5 warmup samples.
 
