@@ -81,7 +81,7 @@ impl Config {
             }
         };
         let config: Self = toml::from_str(&contents)
-            .with_context(|| format!("invalid TOML config at {}", path.display()))?;
+            .context(format!("invalid TOML config at {}", path.display()))?;
         config.validate()?;
         Ok(config)
     }
