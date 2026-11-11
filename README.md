@@ -16,7 +16,7 @@
 
 ## Project status
 
-`bdk_turso` is early-stage and experimental. It currently implements async wallet persistence, and its API may change.
+`bdk_turso` is early-stage and experimental. It currently implements async wallet persistence, and its API may change. `bdk_turso` was built in response to a request for Turso support in bdk_wallet.
 
 ## What is bdk_turso?
 
