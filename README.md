@@ -153,31 +153,37 @@ Local encryption is not supported for remote sync stores, and Turso Cloud encryp
 
 ### Other Turso options
 
-The remaining builders gate Turso capabilities that `bdk_turso` does not need for its own schema. Enable only the ones your application uses.
+The remaining builders are pass-through engine settings. Except for `with_transaction_behavior`, they do not change the crate's schema or persistence queries; they only affect SQL that the application runs on the same database. The default schema already creates B-tree indexes for its lookup columns, so `with_index_method` is only needed for alternative index methods.
 
-| Builder | Effect |
-| --- | --- |
-| `with_index_method` | Enables Turso's experimental index-method support. |
-| `with_multiprocess_wal` | Allows the same database file to be shared between operating-system processes through Turso's WAL coordinator. |
-| `with_vacuum` | Makes `VACUUM` available; it does not run vacuuming automatically. |
-| `with_attach` | Enables `ATTACH DATABASE` and `DETACH DATABASE`. |
-| `with_generated_columns` | Enables generated columns in application SQL; it does not alter the wallet schema. |
-| `with_without_rowid` | Enables `WITHOUT ROWID` table definitions. |
-| `with_mvcc_passive_checkpoint` | Enables Turso's experimental passive-checkpoint behavior for MVCC databases; it does not start a checkpoint. |
+| Builder | What it enables | When to use it | Effect on `bdk_turso` queries |
+| --- | --- | --- | --- |
+| `with_index_method` | Turso's experimental index methods, for example `CREATE INDEX ... USING toy_vector_sparse_ivf (...)` | Application SQL that needs a non-B-tree index method | None. Ordinary B-tree indexes are always available and the schema creates them; the flag is not needed for the crate's lookups. Turso's `fts` method is not compiled into the crate's default dependency build. |
+| `with_multiprocess_wal` | Turso's WAL coordinator for sharing one file between operating-system processes | Several processes open the same database file | None. It adds cross-process locking and coordination; `Store` clones in one process already share a database handle. |
+| `with_vacuum` | The `VACUUM` statement | Reclaiming space after large deletes or migrations | None. The crate never runs `VACUUM`; call it from application SQL. |
+| `with_attach` | `ATTACH DATABASE` and `DETACH DATABASE` | Application SQL that joins another SQLite-compatible file | None. `migrate_to` copies tables without `ATTACH`. |
+| `with_generated_columns` | Generated columns in application schemas | Application tables with computed columns | None. The crate schema has no generated columns and its `INSERT`/`SELECT` statements name columns explicitly. |
+| `with_without_rowid` | `WITHOUT ROWID` table definitions | Application tables with composite primary keys that do not need a rowid | None. The crate schema does not use `WITHOUT ROWID`; `block` and `keychain` rely on integer rowid aliases. |
+| `with_mvcc_passive_checkpoint` | Turso's experimental passive-checkpoint behavior for MVCC databases | Long-running MVCC workloads that need background checkpointing | None. It does not start a checkpoint. Select `Concurrent` through `with_transaction_behavior` (or enable MVCC externally) first. |
+| `with_transaction_behavior` | The `BEGIN` mode for every transaction: `Deferred`, `Immediate`, `Exclusive`, or `Concurrent` | Tuning locking and write contention; `Concurrent` allows parallel writers | Applies to all crate transactions. `Concurrent` switches local databases to MVCC and is rejected for remote sync; migration still uses `Deferred` because Turso rejects DDL under `BEGIN CONCURRENT`. |
+
+The four transaction behaviors are mutually exclusive because Turso stores one behavior per connection. Calling `with_transaction_behavior` again replaces the previous value; the last call wins. `with_multiprocess_wal` cannot be combined with `Concurrent`: Turso's MVCC mode does not support multi-process access, so the constructor returns `Error::ConflictingOptions`.
 
 ```rust,no_run
-use bdk_turso::{Options, Store};
+use bdk_turso::{Options, Store, TransactionBehavior};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let options = Options::new().with_attach().with_generated_columns();
+    let options = Options::new()
+        .with_attach()
+        .with_generated_columns()
+        .with_transaction_behavior(TransactionBehavior::Immediate);
     let store = Store::new_with_options("wallet.sqlite", options).await?;
     store.migrate().await?;
     Ok(())
 }
 ```
 
-Local at-rest encryption and `with_mvcc_passive_checkpoint` are rejected by remote sync stores with an error. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
+Local at-rest encryption and `with_mvcc_passive_checkpoint` are rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
 
 ## PSBT persistence
 
@@ -229,11 +235,11 @@ let store = Store::new_remote(
 store.migrate().await?;
 ```
 
-Local at-rest encryption and MVCC passive checkpointing are not supported by Turso's remote sync builder and return an error if requested. The ignored sync integration test can target a disposable Turso Cloud database or a local Turso sync server. Set `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` to the endpoint and token accepted by that server, then run `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.
+Local at-rest encryption, MVCC passive checkpointing, and `TransactionBehavior::Concurrent` are not supported by Turso's remote sync builder and return an error if requested. The ignored sync integration test can target a disposable Turso Cloud database or a local Turso sync server. Set `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` to the endpoint and token accepted by that server, then run `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.
 
 ## Feature flags
 
-`Store::migrate()` always creates the core block and transaction tables. Wallet-specific and PSBT tables are created only when their respective features are enabled.
+`Store::migrate()` always creates the core block and transaction tables. Wallet-specific and PSBT tables are created only when their respective features are enabled. The default schema also creates B-tree indexes for `block(hash)`, `txout(script)`, `anchor(txid)`, and `anchor(block_hash)`; the `wallet` schema adds `keychain_script_pubkey(script)`.
 
 | Feature | Description |
 | --- | --- |

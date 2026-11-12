@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS keychain_script_pubkey (
     PRIMARY KEY (descriptor_id, derivation_index)
 );
 
+CREATE INDEX IF NOT EXISTS keychain_script_pubkey_script_idx ON keychain_script_pubkey(script);
+
 CREATE TABLE IF NOT EXISTS keychain (
     keychain INTEGER NOT NULL PRIMARY KEY,
     descriptor TEXT NOT NULL
