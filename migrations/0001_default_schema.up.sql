@@ -26,3 +26,8 @@ CREATE TABLE IF NOT EXISTS anchor (
     confirmation_time INTEGER NOT NULL,
     PRIMARY KEY (block_height, block_hash, txid)
 );
+
+CREATE INDEX IF NOT EXISTS block_hash_idx ON block(hash);
+CREATE INDEX IF NOT EXISTS txout_script_idx ON txout(script);
+CREATE INDEX IF NOT EXISTS anchor_txid_idx ON anchor(txid);
+CREATE INDEX IF NOT EXISTS anchor_block_hash_idx ON anchor(block_hash);

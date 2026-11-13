@@ -13,6 +13,7 @@ use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxOut, Txid, 
 pub use turso::EncryptionOpts;
 #[cfg(feature = "remote")]
 pub use turso::sync::RemoteEncryptionCipher;
+pub use turso::transaction::TransactionBehavior;
 use turso::{
     Builder, Connection, Database as LocalDatabase, Value,
     transaction::Transaction as DatabaseTransaction,
@@ -30,10 +31,28 @@ type TableColumn = (String, String, i64, Value, i64);
 /// immediately with `Busy`. This matches the 5-second default used by `sqlx`'s SQLite driver.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Switch a local database to MVCC journal mode.
+///
+/// `BEGIN CONCURRENT` is only accepted when MVCC is enabled. The setting is persisted in the
+/// database header, so this is a no-op after the first call.
+async fn enable_mvcc(database: &LocalDatabase) -> Result<(), Error> {
+    let connection = database.connect()?;
+    let mut rows = connection.query("PRAGMA journal_mode = 'mvcc'", ()).await?;
+    while rows.next().await?.is_some() {}
+    Ok(())
+}
+
 /// Opt-in Turso features applied when opening a [`Store`].
 ///
 /// All experimental features are disabled by default. Configure an `Options` value before opening
 /// the database; these settings cannot be changed on an already-open database.
+///
+/// These builders are pass-through engine settings: they change what SQL an application may run or
+/// how Turso executes it, but they do not change the crate's schema or persistence queries. The
+/// exceptions are [`Options::with_transaction_behavior`], which applies to every transaction the
+/// store opens, and the default B-tree indexes created by [`Store::migrate`], which do not depend
+/// on any option. `with_generated_columns` and `with_without_rowid` affect only application SQL,
+/// and `with_index_method` enables alternative index methods rather than ordinary B-tree indexes.
 #[derive(Clone, Default)]
 pub struct Options {
     /// Enables Turso's experimental index-method support.
@@ -50,6 +69,8 @@ pub struct Options {
     without_rowid: bool,
     /// Enables the MVCC passive checkpoint option.
     mvcc_passive_checkpoint: bool,
+    /// Transaction behavior applied to every connection opened by the store.
+    transaction_behavior: Option<TransactionBehavior>,
     /// Enables local at-rest encryption and supplies its cipher and key.
     encryption: Option<EncryptionOpts>,
     #[cfg(feature = "remote")]
@@ -68,8 +89,13 @@ impl Options {
 
     /// Enable Turso's experimental index-method support for the opened database.
     ///
-    /// This setting must be enabled before opening the database and only affects databases opened
-    /// with the returned options.
+    /// This allows application SQL to create indexes with a non-default method, such as
+    /// `CREATE INDEX ... USING toy_vector_sparse_ivf (...)`. It does not enable ordinary B-tree
+    /// indexes, which are always available; [`Store::migrate`] already creates B-tree indexes for
+    /// the crate's lookup columns. The crate's own queries do not use alternative index methods, so
+    /// this option only affects application-level SQL. Turso's full-text `fts` method is not
+    /// compiled into this crate's default dependency build. It must be enabled before opening the
+    /// database and only affects databases opened with the returned options.
     pub fn with_index_method(mut self) -> Self {
         self.index_method = true;
         self
@@ -78,7 +104,11 @@ impl Options {
     /// Enable multi-process access to the database through Turso's WAL coordinator.
     ///
     /// Use this only when the same database file must be shared between operating-system
-    /// processes; it is disabled by default.
+    /// processes. It changes locking and coordination at the engine level; it does not change the
+    /// crate's schema or queries. Multiple [`Store`] clones in one process already share the same
+    /// database handle and do not need this option. It cannot be combined with
+    /// [`TransactionBehavior::Concurrent`], because Turso's MVCC mode does not support multi-process
+    /// access; that combination returns [`Error::ConflictingOptions`]. Disabled by default.
     pub fn with_multiprocess_wal(mut self) -> Self {
         self.multiprocess_wal = true;
         self
@@ -86,7 +116,9 @@ impl Options {
 
     /// Enable Turso's experimental `VACUUM` support for the opened database.
     ///
-    /// The option makes the command available; it does not run vacuuming automatically.
+    /// Use it when application SQL needs to reclaim space after large deletions or migrations. It
+    /// makes the command available; it does not run vacuuming automatically, and the crate never
+    /// runs `VACUUM` itself. Query behavior is otherwise unchanged.
     pub fn with_vacuum(mut self) -> Self {
         self.vacuum = true;
         self
@@ -94,7 +126,9 @@ impl Options {
 
     /// Enable SQL `ATTACH DATABASE` and `DETACH DATABASE` statements.
     ///
-    /// This is disabled by default and is only applied when the database is opened.
+    /// Use it for application SQL that reads or joins another SQLite-compatible file. It does not
+    /// change the crate's schema or queries; [`Store::migrate_to`] copies tables without
+    /// `ATTACH`. Disabled by default and applied only when the database is opened.
     pub fn with_attach(mut self) -> Self {
         self.attach = true;
         self
@@ -102,8 +136,9 @@ impl Options {
 
     /// Enable Turso's experimental generated-column support for SQL schemas.
     ///
-    /// This setting does not alter the crate's wallet schema; it allows applications to use
-    /// generated columns in their own database operations.
+    /// Use it for application tables that declare `GENERATED ALWAYS AS` columns. It does not alter
+    /// the crate's wallet schema, and the crate's `INSERT` and `SELECT` statements name columns
+    /// explicitly, so generated columns only affect application-level SQL.
     pub fn with_generated_columns(mut self) -> Self {
         self.generated_columns = true;
         self
@@ -111,7 +146,10 @@ impl Options {
 
     /// Enable `WITHOUT ROWID` table definitions in the opened database.
     ///
-    /// Enable this only if application SQL needs to create such tables.
+    /// Use it for application tables with composite primary keys that do not need an implicit
+    /// rowid. `WITHOUT ROWID` stores rows in primary-key order: primary-key lookups avoid a second
+    /// index, but there is no implicit rowid and `INTEGER PRIMARY KEY` no longer aliases one. The
+    /// crate's schema does not use `WITHOUT ROWID`, so its tables and queries are unchanged.
     pub fn with_without_rowid(mut self) -> Self {
         self.without_rowid = true;
         self
@@ -119,9 +157,39 @@ impl Options {
 
     /// Enable Turso's experimental passive-checkpoint behavior for MVCC databases.
     ///
-    /// This setting is opt-in and does not initiate a checkpoint by itself.
+    /// Use it for long-running MVCC workloads that need checkpointing to run alongside readers and
+    /// writers. The database must already be in MVCC journal mode; selecting
+    /// [`TransactionBehavior::Concurrent`] through [`Options::with_transaction_behavior`] enables
+    /// MVCC for local stores. This option only enables the behavior and does not start a
+    /// checkpoint. It is rejected by remote sync stores, and the crate's schema and queries are
+    /// unchanged.
     pub fn with_mvcc_passive_checkpoint(mut self) -> Self {
         self.mvcc_passive_checkpoint = true;
+        self
+    }
+
+    /// Set the behavior used by every transaction opened through this store.
+    ///
+    /// Turso stores one [`TransactionBehavior`] per connection, and a later call replaces the
+    /// earlier value, so the four behaviors are mutually exclusive rather than composable. Calling
+    /// this method more than once is allowed and the last call wins.
+    ///
+    /// - [`TransactionBehavior::Deferred`] (the default) starts the transaction on first access.
+    /// - [`TransactionBehavior::Immediate`] acquires the write lock at `BEGIN`.
+    /// - [`TransactionBehavior::Exclusive`] prevents other connections from reading while the
+    ///   transaction is open.
+    /// - [`TransactionBehavior::Concurrent`] allows parallel writers with conflicts detected at
+    ///   commit.
+    ///
+    /// Selecting `Concurrent` switches a local database to MVCC journal mode when the store is
+    /// opened. Turso rejects DDL inside `BEGIN CONCURRENT`, so [`Store::migrate`] and
+    /// [`Store::migrate_to`] still use a `Deferred` transaction for schema changes. `Concurrent` is
+    /// rejected by remote sync stores and cannot be combined with
+    /// [`Options::with_multiprocess_wal`] (MVCC does not support multi-process access); those
+    /// combinations return `Error::UnsupportedOption` or [`Error::ConflictingOptions`]
+    /// respectively. The crate's read and write queries otherwise run under the selected behavior.
+    pub fn with_transaction_behavior(mut self, behavior: TransactionBehavior) -> Self {
+        self.transaction_behavior = Some(behavior);
         self
     }
 
@@ -182,6 +250,16 @@ impl fmt::Debug for Options {
             .field("generated_columns", &self.generated_columns)
             .field("without_rowid", &self.without_rowid)
             .field("mvcc_passive_checkpoint", &self.mvcc_passive_checkpoint)
+            .field(
+                "transaction_behavior",
+                &match self.transaction_behavior {
+                    None | Some(TransactionBehavior::Deferred) => "deferred",
+                    Some(TransactionBehavior::Immediate) => "immediate",
+                    Some(TransactionBehavior::Exclusive) => "exclusive",
+                    Some(TransactionBehavior::Concurrent) => "concurrent",
+                    Some(_) => "unknown",
+                },
+            )
             .field("encryption_enabled", &self.encryption.is_some())
             .field("remote_encryption_enabled", &{
                 #[cfg(feature = "remote")]
@@ -281,6 +359,17 @@ impl Store {
     /// # }
     /// ```
     pub async fn new_with_options(path: &str, options: Options) -> Result<Self, Error> {
+        if options.multiprocess_wal
+            && matches!(
+                options.transaction_behavior,
+                Some(TransactionBehavior::Concurrent)
+            )
+        {
+            return Err(Error::ConflictingOptions(
+                "`with_multiprocess_wal` cannot be combined with `TransactionBehavior::Concurrent`: Turso's MVCC mode does not support multi-process access".into(),
+            ));
+        }
+
         #[cfg(feature = "remote")]
         if options.remote_encryption.is_some() {
             return Err(Error::UnsupportedOption(
@@ -304,6 +393,12 @@ impl Store {
         }
 
         let database = builder.build().await?;
+        if matches!(
+            options.transaction_behavior,
+            Some(TransactionBehavior::Concurrent)
+        ) {
+            enable_mvcc(&database).await?;
+        }
         Ok(Self {
             database: StoreDatabase::Local(database),
             options: Some(options),
@@ -367,6 +462,14 @@ impl Store {
                 "MVCC passive checkpointing is not supported by Turso's remote sync builder".into(),
             ));
         }
+        if matches!(
+            options.transaction_behavior,
+            Some(TransactionBehavior::Concurrent)
+        ) {
+            return Err(Error::UnsupportedOption(
+                "Concurrent transaction behavior requires MVCC and is not supported by Turso's remote sync builder".into(),
+            ));
+        }
 
         let mut builder = turso::sync::Builder::new_remote(local_path)
             .with_remote_url(remote_url)
@@ -411,17 +514,34 @@ impl Store {
     }
 
     pub(crate) async fn connect(&self) -> Result<Connection, Error> {
+        self.connect_with_behavior(self.configured_transaction_behavior())
+            .await
+    }
+
+    fn configured_transaction_behavior(&self) -> TransactionBehavior {
+        self.options
+            .as_ref()
+            .and_then(|options| options.transaction_behavior)
+            .unwrap_or(TransactionBehavior::Deferred)
+    }
+
+    async fn connect_with_behavior(
+        &self,
+        transaction_behavior: TransactionBehavior,
+    ) -> Result<Connection, Error> {
         match &self.database {
             StoreDatabase::Local(database) => {
-                let connection = database.connect()?;
+                let mut connection = database.connect()?;
                 connection.busy_timeout(BUSY_TIMEOUT)?;
+                connection.set_transaction_behavior(transaction_behavior);
                 Ok(connection)
             }
             #[cfg(feature = "remote")]
             StoreDatabase::Remote(database) => {
                 database.pull().await?;
-                let connection = database.connect().await?;
+                let mut connection = database.connect().await?;
                 connection.busy_timeout(BUSY_TIMEOUT)?;
+                connection.set_transaction_behavior(transaction_behavior);
                 Ok(connection)
             }
         }
@@ -445,8 +565,13 @@ impl Store {
     /// Core chain and transaction tables are always created. Wallet-specific tables are created
     /// only with the `wallet` feature, and the PSBT table only with `psbt`. This migration is safe
     /// to run repeatedly; `AsyncWalletPersister::initialize` runs it for you when enabled.
+    ///
+    /// DDL runs in a `Deferred` transaction even when the store uses another transaction behavior,
+    /// because Turso rejects DDL inside `BEGIN CONCURRENT`.
     pub async fn migrate(&self) -> Result<(), Error> {
-        let mut conn = self.connect().await?;
+        let mut conn = self
+            .connect_with_behavior(TransactionBehavior::Deferred)
+            .await?;
         let txn = conn.transaction().await?;
         txn.execute_batch(include_str!("../migrations/0001_default_schema.up.sql"))
             .await?;
@@ -462,31 +587,50 @@ impl Store {
         Ok(())
     }
 
-    /// Copy tables and rows present in this store to `destination` without running schema migrations.
+    /// Copy tables, indexes, and rows present in this store to `destination` without running schema
+    /// migrations.
     ///
     /// Existing tables must have compatible column definitions. Source rows replace destination
-    /// rows on key conflicts, while destination-only rows and tables remain. The destination is
-    /// expected to be empty, though merging into an existing store is supported. The transfer is
-    /// atomic on the destination; the source is unchanged. Feature-gated tables are discovered from
-    /// the database itself, so this also works when the stores were opened with different features
-    /// or wrapped with [`Store::from_database`]. Internal SQLite and Turso tables are not copied.
-    /// Both the source and destination are read through their own transactions, and remote stores
-    /// pull before access. The destination is pushed after the local transaction commits; a failed
-    /// remote push may leave the destination's local cache updated.
+    /// rows on key conflicts, while destination-only rows and tables remain. Indexes are copied
+    /// after rows are transferred; an index that already exists in the destination must have the
+    /// same definition. The destination is expected to be empty, though merging into an existing
+    /// store is supported. The transfer is atomic on the destination; the source is unchanged.
+    /// Feature-gated tables are discovered from the database itself, so this also works when the
+    /// stores were opened with different features or wrapped with [`Store::from_database`].
+    /// Internal SQLite and Turso tables are not copied. Both the source and destination are read
+    /// through their own transactions, and remote stores pull before access. The destination is
+    /// pushed after the local transaction commits; a failed remote push may leave the destination's
+    /// local cache updated.
+    ///
+    /// Both connections use a `Deferred` transaction behavior, because Turso rejects DDL inside
+    /// `BEGIN CONCURRENT` and this method creates tables and indexes on the destination.
     pub async fn migrate_to(&self, destination: &Store) -> Result<(), Error> {
-        let mut source_conn = self.connect().await?;
-        let mut destination_conn = destination.connect().await?;
-        let (source_tables, source_columns) = {
+        let mut source_conn = self
+            .connect_with_behavior(TransactionBehavior::Deferred)
+            .await?;
+        let mut destination_conn = destination
+            .connect_with_behavior(TransactionBehavior::Deferred)
+            .await?;
+        let (source_tables, source_columns, source_indexes) = {
             let source_txn = source_conn.transaction().await?;
             let source_tables = Self::user_tables(&source_txn).await?;
+            let source_table_names = source_tables
+                .iter()
+                .map(|(name, _)| name.to_ascii_lowercase())
+                .collect::<std::collections::HashSet<_>>();
             let mut source_columns: std::collections::HashMap<String, Vec<TableColumn>> =
                 std::collections::HashMap::new();
             for (name, _) in &source_tables {
                 let columns = Self::table_columns(&source_txn, name).await?;
                 source_columns.insert(name.to_ascii_lowercase(), columns);
             }
+            let source_indexes = Self::user_indexes(&source_txn)
+                .await?
+                .into_iter()
+                .filter(|(_, table, _)| source_table_names.contains(&table.to_ascii_lowercase()))
+                .collect::<Vec<_>>();
             source_txn.commit().await?;
-            (source_tables, source_columns)
+            (source_tables, source_columns, source_indexes)
         };
         let destination_tables = Self::user_tables(&destination_conn).await?;
         let destination_names = destination_tables
@@ -499,6 +643,11 @@ impl Store {
             let columns = Self::table_columns(&destination_conn, name).await?;
             destination_columns.insert(name.to_ascii_lowercase(), columns);
         }
+        let destination_indexes = Self::user_indexes(&destination_conn)
+            .await?
+            .into_iter()
+            .map(|(name, _, sql)| (name.to_ascii_lowercase(), sql))
+            .collect::<std::collections::HashMap<_, _>>();
 
         let source_txn = source_conn.transaction().await?;
         let destination_txn = destination_conn.transaction().await?;
@@ -561,6 +710,18 @@ impl Store {
             }
         }
 
+        for (index, table, create_sql) in source_indexes {
+            match destination_indexes.get(&index.to_ascii_lowercase()) {
+                Some(existing) if existing != &create_sql => {
+                    return Err(Error::Migration(format!(
+                        "index `{index}` on `{table}` has an incompatible definition in the destination"
+                    )));
+                }
+                Some(_) => {}
+                None => destination_txn.execute_batch(&create_sql).await?,
+            }
+        }
+
         destination_txn.commit().await?;
         source_txn.commit().await?;
         drop(destination_conn);
@@ -580,6 +741,20 @@ impl Store {
             tables.push((row.get(0)?, row.get(1)?));
         }
         Ok(tables)
+    }
+
+    async fn user_indexes(conn: &Connection) -> Result<Vec<(String, String, String)>, Error> {
+        let mut rows = conn
+            .query(
+                "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL ORDER BY name",
+                (),
+            )
+            .await?;
+        let mut indexes = Vec::new();
+        while let Some(row) = rows.next().await? {
+            indexes.push((row.get(0)?, row.get(1)?, row.get(2)?));
+        }
+        Ok(indexes)
     }
 
     async fn table_columns(conn: &Connection, table: &str) -> Result<Vec<TableColumn>, Error> {
@@ -1023,6 +1198,7 @@ mod test {
         assert!(!options.generated_columns);
         assert!(!options.without_rowid);
         assert!(!options.mvcc_passive_checkpoint);
+        assert!(options.transaction_behavior.is_none());
         assert!(options.encryption.is_none());
         #[cfg(feature = "remote")]
         assert!(options.remote_encryption.is_none());
@@ -1068,6 +1244,18 @@ mod test {
         .unwrap_err();
         assert!(
             matches!(error, Error::UnsupportedOption(message) if message.contains("MVCC passive checkpointing"))
+        );
+
+        let error = Store::new_remote_with_options(
+            ":memory:",
+            "libsql://unused.turso.io",
+            "unused-token",
+            Options::new().with_transaction_behavior(TransactionBehavior::Concurrent),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::UnsupportedOption(message) if message.contains("Concurrent transaction behavior"))
         );
 
         let remote_encryption = Options::new()
@@ -1121,6 +1309,213 @@ mod test {
             )
             .await?;
         assert_eq!(rows.next().await?.is_some(), cfg!(feature = "psbt"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn migrate_creates_lookup_indexes() -> anyhow::Result<()> {
+        let store = Store::new_memory().await?;
+        store.migrate().await?;
+
+        let names = index_names(&store).await?;
+        for expected in [
+            "anchor_block_hash_idx",
+            "anchor_txid_idx",
+            "block_hash_idx",
+            "txout_script_idx",
+        ] {
+            assert!(
+                names.contains(&expected.to_owned()),
+                "missing index `{expected}`; found {names:?}"
+            );
+        }
+        #[cfg(feature = "wallet")]
+        assert!(
+            names.contains(&"keychain_script_pubkey_script_idx".to_owned()),
+            "missing wallet script index; found {names:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn migrate_to_copies_indexes() -> anyhow::Result<()> {
+        let source = Store::new_memory().await?;
+        source.migrate().await?;
+
+        let destination = Store::new_memory().await?;
+        source.migrate_to(&destination).await?;
+
+        assert_eq!(
+            index_names(&source).await?,
+            index_names(&destination).await?
+        );
+        Ok(())
+    }
+
+    async fn index_names(store: &Store) -> anyhow::Result<Vec<String>> {
+        let conn = store.connect().await?;
+        let mut rows = conn
+            .query(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL ORDER BY name",
+                (),
+            )
+            .await?;
+        let mut names = Vec::new();
+        while let Some(row) = rows.next().await? {
+            names.push(row.get::<String>(0)?);
+        }
+        Ok(names)
+    }
+
+    #[test]
+    fn transaction_behavior_last_call_wins() {
+        let options = Options::new()
+            .with_transaction_behavior(TransactionBehavior::Immediate)
+            .with_transaction_behavior(TransactionBehavior::Exclusive);
+
+        assert!(matches!(
+            options.transaction_behavior,
+            Some(TransactionBehavior::Exclusive)
+        ));
+    }
+
+    #[tokio::test]
+    async fn multiprocess_wal_conflicts_with_concurrent() -> anyhow::Result<()> {
+        let error = Store::new_memory_with_options(
+            Options::new()
+                .with_multiprocess_wal()
+                .with_transaction_behavior(TransactionBehavior::Concurrent),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, Error::ConflictingOptions(message) if message.contains("multiprocess"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_transaction_behavior_enables_mvcc() -> anyhow::Result<()> {
+        let store = Store::new_memory_with_options(
+            Options::new().with_transaction_behavior(TransactionBehavior::Concurrent),
+        )
+        .await?;
+        store.migrate().await?;
+
+        let conn = store.connect().await?;
+        let mut rows = conn.query("PRAGMA journal_mode", ()).await?;
+        let row = rows
+            .next()
+            .await?
+            .expect("journal_mode should return a row");
+        assert_eq!(row.get::<String>(0)?, "mvcc");
+
+        let mut changeset = local_chain::ChangeSet::default();
+        changeset.blocks.insert(7, Some(Hash::hash(b"concurrent")));
+        store.write_local_chain(&changeset).await?;
+        assert_eq!(store.read_local_chain().await?, changeset);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn each_transaction_behavior_can_write() -> anyhow::Result<()> {
+        for behavior in [
+            TransactionBehavior::Deferred,
+            TransactionBehavior::Immediate,
+            TransactionBehavior::Exclusive,
+        ] {
+            let store =
+                Store::new_memory_with_options(Options::new().with_transaction_behavior(behavior))
+                    .await?;
+            store.migrate().await?;
+
+            let mut changeset = local_chain::ChangeSet::default();
+            changeset.blocks.insert(1, Some(Hash::hash(b"behavior")));
+            store.write_local_chain(&changeset).await?;
+            assert_eq!(store.read_local_chain().await?, changeset);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lookup_queries_use_default_indexes() -> anyhow::Result<()> {
+        let store = Store::new_memory().await?;
+        store.migrate().await?;
+        let conn = store.connect().await?;
+
+        let mut lookups = vec![
+            (
+                "EXPLAIN QUERY PLAN SELECT height FROM block WHERE hash = 'x'",
+                "block_hash_idx",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT txid FROM txout WHERE script = x'00'",
+                "txout_script_idx",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT block_height FROM anchor WHERE txid = 'x'",
+                "anchor_txid_idx",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT txid FROM anchor WHERE block_hash = 'x'",
+                "anchor_block_hash_idx",
+            ),
+        ];
+        #[cfg(feature = "wallet")]
+        lookups.push((
+            "EXPLAIN QUERY PLAN SELECT descriptor_id FROM keychain_script_pubkey WHERE script = x'00'",
+            "keychain_script_pubkey_script_idx",
+        ));
+
+        for (sql, index) in lookups {
+            let mut rows = conn.query(sql, ()).await?;
+            let mut plan = String::new();
+            while let Some(row) = rows.next().await? {
+                plan.push_str(&row.get::<String>(3)?);
+                plan.push('\n');
+            }
+            assert!(
+                plan.contains(index),
+                "`{sql}` did not use `{index}`:\n{plan}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn index_method_option_enables_application_index_methods() -> anyhow::Result<()> {
+        let store = Store::new_memory_with_options(Options::new().with_index_method()).await?;
+        store.migrate().await?;
+        let conn = store.connect().await?;
+        conn.execute(
+            "CREATE TABLE vectors (id INTEGER PRIMARY KEY, embedding)",
+            (),
+        )
+        .await?;
+        conn.execute_batch(
+            "INSERT INTO vectors VALUES (1, vector32_sparse('[1, 0, 1]'));
+             INSERT INTO vectors VALUES (2, vector32_sparse('[2, 0, 1]'));
+             INSERT INTO vectors VALUES (3, vector32_sparse('[3, 0, 1]'));",
+        )
+        .await?;
+        conn.execute(
+            "CREATE INDEX vectors_idx ON vectors USING toy_vector_sparse_ivf (embedding)",
+            (),
+        )
+        .await?;
+
+        let mut rows = conn
+            .query(
+                "SELECT id FROM vectors ORDER BY vector_distance_jaccard(embedding, vector32_sparse('[3, 0, 1]')) LIMIT 1",
+                (),
+            )
+            .await?;
+        let row = rows
+            .next()
+            .await?
+            .expect("index method should return a row");
+        assert_eq!(row.get::<i64>(0)?, 3);
         Ok(())
     }
 

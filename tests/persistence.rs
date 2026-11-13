@@ -12,7 +12,7 @@ use bdk_chain::{
     miniscript::descriptor::{Descriptor, DescriptorPublicKey},
     tx_graph,
 };
-use bdk_turso::{EncryptionOpts, Options, Store, generate_encryption_opts};
+use bdk_turso::{EncryptionOpts, Options, Store, TransactionBehavior, generate_encryption_opts};
 use bdk_wallet::{ChangeSet, KeychainKind, Wallet, locked_outpoints};
 
 const EXTERNAL_DESCRIPTOR: &str = "wpkh([41f2aed0/84h/1h/0h]tpubDDFSdQWw75hk1ewbwnNpPp5DvXFRKt68ioPoyJDY752cNHKkFxPWqkqCyCf4hxrEfpuxh46QisehL3m8Bi6MsAv394QVLopwbtfvryFQNUH/0/*)#g0w0ymmw";
@@ -79,6 +79,33 @@ async fn store_opens_with_experimental_options() -> anyhow::Result<()> {
 
     let store = Store::new_with_options(path, options).await?;
     store.migrate().await?;
+
+    let expected = full_changeset(31);
+    store.write_changeset(&expected).await?;
+    assert_eq!(store.read_changeset().await?, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn store_opens_with_concurrent_transactions() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("concurrent.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+    let options = Options::new()
+        .with_index_method()
+        .with_vacuum()
+        .with_attach()
+        .with_generated_columns()
+        .with_without_rowid()
+        .with_mvcc_passive_checkpoint()
+        .with_transaction_behavior(TransactionBehavior::Concurrent);
+
+    let store = Store::new_with_options(path, options).await?;
+    store.migrate().await?;
+
+    let expected = full_changeset(32);
+    store.write_changeset(&expected).await?;
+    assert_eq!(store.read_changeset().await?, expected);
     Ok(())
 }
 

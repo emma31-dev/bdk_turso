@@ -6,10 +6,16 @@ Notable changes to `bdk_turso` are documented here.
 
 ### Added
 
+- Default B-tree indexes for lookup columns: `block(hash)`, `txout(script)`, `anchor(txid)`, `anchor(block_hash)`, and `keychain_script_pubkey(script)` with the `wallet` feature. `Store::migrate()` creates them for new and existing databases.
+- `Options::with_transaction_behavior` selects `Deferred`, `Immediate`, `Exclusive`, or `Concurrent` transactions for every store operation, and `TransactionBehavior` is re-exported from Turso. `Concurrent` switches local databases to MVCC journal mode; `Store::migrate` and `Store::migrate_to` still use `Deferred` for DDL.
+- `Error::ConflictingOptions` reports option combinations that Turso cannot run, such as `with_multiprocess_wal` together with `TransactionBehavior::Concurrent`.
 - Reproducible benchmark suite comparing `bdk_turso`, `bdk_sqlite`, and `bdk_redb` on wallet changeset reads and writes, concurrent writes at several writer counts, database opening, and on-disk storage. Sample and batch sizes, writer counts, dataset shape, Turso options, and enabled backends are configurable through an optional `benches/config.toml` or `--config`. Results are published in [BENCHMARK.md](BENCHMARK.md) and are not run or thresholded in CI.
 
 ### Changed
 
+- `Store::migrate()` builds the new lookup indexes on existing databases the next time it runs. Expect a one-time index-build cost and extra disk usage proportional to table size; the indexes are additive, so older versions can still open the database.
+- `Store::migrate_to` now copies user indexes as well as tables and rows. It returns `Error::Migration` if the destination already has an index with the same name but a different definition, rather than leaving the destination without the index.
+- Expanded documentation for every experimental Turso option with when to use it, how it affects query behavior, and whether it changes the crate's schema or persistence queries. Added tests that run the crate's read and write queries with the experimental options enabled.
 - The wallet and transaction examples now load settings from a shared `examples/config.toml`. `examples/example.toml` is the committed template; the local file is ignored by git, and a missing or invalid configuration stops with an actionable error.
 
 ### Fixed
