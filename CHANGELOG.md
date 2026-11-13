@@ -2,7 +2,7 @@
 
 Notable changes to `bdk_turso` are documented here.
 
-## [Unreleased]
+## [0.3.1]
 
 ### Added
 
