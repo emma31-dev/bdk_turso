@@ -82,10 +82,11 @@ Releases before 0.3.0 were not measured with this suite. No historical figures a
 
 ### Unreleased (after 0.3.0)
 
-Measured with the default settings that later became the template in `benches/example.toml`.
-The working tree was dirty at commit `6818c3368535b7992445582f60bc44f897b9993a`; the changes under test included the busy-timeout fix and the benchmark suite itself.
+Measured at merge commit `291d6331bfb5bb5b66fb7e1e79d2d3732ba04c83`, which includes the default lookup indexes and transaction-behavior options from #22, #23, and #24. The working tree was dirty because of untracked local files; no tracked files differed from the commit.
 
-Generated on 2026-11-09T07:32:07Z with 30 samples and 5 warmup samples.
+This run used `--quick`: 5 samples, 1 warmup sample, batches of 5 writes and 10 reads, 2 concurrent rounds, and 1 open per sample. Writer counts, dataset shape, storage changesets, and Turso options are the defaults.
+
+Generated on 2026-11-13T15:21:24Z with 5 samples and 1 warmup sample (quick mode).
 
 #### Environment
 
@@ -96,7 +97,7 @@ Generated on 2026-11-09T07:32:07Z with 30 samples and 5 warmup samples.
 | CPU | Intel(R) Core(TM) i5-5350U CPU @ 1.80GHz |
 | Cargo | cargo 1.97.1 (c980f4866 2026-06-30) |
 | Crate features | wallet=true, psbt=false, remote=false, blocking=true |
-| Git commit | 6818c3368535b7992445582f60bc44f897b9993a |
+| Git commit | 291d6331bfb5bb5b66fb7e1e79d2d3732ba04c83 |
 | Git status | dirty |
 | Memory | 8.0 GiB |
 | Operating system | Darwin 21.6.0 x86_64 |
@@ -116,27 +117,27 @@ Generated on 2026-11-09T07:32:07Z with 30 samples and 5 warmup samples.
 
 | Workload | Backend | Writers | Median | p95 | Throughput | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| write changeset | bdk_turso | - | 51.30 ms | 67.56 ms | 19.5/s | |
-| read changeset | bdk_turso | - | 3.23 ms | 4.05 ms | 309.3/s | |
-| concurrent write | bdk_turso | 1 | 48.08 ms | 78.99 ms | 20.8/s | |
-| concurrent write | bdk_turso | 2 | 48.11 ms | 70.77 ms | 20.8/s | |
-| concurrent write | bdk_turso | 4 | 67.79 ms | 102.93 ms | 14.8/s | |
-| concurrent write | bdk_turso | 8 | 101.35 ms | 131.24 ms | 9.9/s | |
-| open existing database | bdk_turso | - | 1.20 ms | 1.36 ms | 834.2/s | |
-| write changeset | bdk_sqlite | - | 11.63 ms | 13.50 ms | 86.0/s | |
-| read changeset | bdk_sqlite | - | 2.46 ms | 3.04 ms | 406.4/s | |
-| concurrent write | bdk_sqlite | 1 | 10.94 ms | 14.76 ms | 91.4/s | |
-| concurrent write | bdk_sqlite | 2 | 17.34 ms | 23.08 ms | 57.7/s | |
-| concurrent write | bdk_sqlite | 4 | 19.56 ms | 32.84 ms | 51.1/s | |
-| concurrent write | bdk_sqlite | 8 | 27.06 ms | 34.29 ms | 37.0/s | |
-| open existing database | bdk_sqlite | - | 377.05 µs | 711.29 µs | 2.7k/s | |
-| write changeset | bdk_redb | - | 76.31 ms | 86.90 ms | 13.1/s | |
-| read changeset | bdk_redb | - | 517.00 µs | 643.44 µs | 1.9k/s | |
-| concurrent write | bdk_redb | 1 | 75.56 ms | 82.41 ms | 13.2/s | |
-| concurrent write | bdk_redb | 2 | 78.03 ms | 91.34 ms | 12.8/s | |
-| concurrent write | bdk_redb | 4 | 78.07 ms | 90.21 ms | 12.8/s | |
-| concurrent write | bdk_redb | 8 | 81.17 ms | 89.86 ms | 12.3/s | |
-| open existing database | bdk_redb | - | 43.99 ms | 49.85 ms | 22.7/s | |
+| write changeset | bdk_turso | - | 37.06 ms | 40.09 ms | 27.0/s | |
+| read changeset | bdk_turso | - | 2.03 ms | 2.57 ms | 493.3/s | |
+| concurrent write | bdk_turso | 1 | 44.65 ms | 215.44 ms | 22.4/s | |
+| concurrent write | bdk_turso | 2 | 36.65 ms | 50.32 ms | 27.3/s | |
+| concurrent write | bdk_turso | 4 | 56.02 ms | 126.84 ms | 17.9/s | |
+| concurrent write | bdk_turso | 8 | 154.61 ms | 206.41 ms | 6.5/s | |
+| open existing database | bdk_turso | - | 1.66 ms | 2.57 ms | 603.9/s | |
+| write changeset | bdk_sqlite | - | 11.76 ms | 12.28 ms | 85.0/s | |
+| read changeset | bdk_sqlite | - | 3.99 ms | 5.33 ms | 250.8/s | |
+| concurrent write | bdk_sqlite | 1 | 17.27 ms | 35.00 ms | 57.9/s | |
+| concurrent write | bdk_sqlite | 2 | 18.19 ms | 18.98 ms | 55.0/s | |
+| concurrent write | bdk_sqlite | 4 | 19.30 ms | 26.96 ms | 51.8/s | |
+| concurrent write | bdk_sqlite | 8 | 33.37 ms | 35.09 ms | 30.0/s | |
+| open existing database | bdk_sqlite | - | 406.76 µs | 541.72 µs | 2.5k/s | |
+| write changeset | bdk_redb | - | 118.00 ms | 130.66 ms | 8.5/s | |
+| read changeset | bdk_redb | - | 457.11 µs | 558.12 µs | 2.2k/s | |
+| concurrent write | bdk_redb | 1 | 106.63 ms | 118.82 ms | 9.4/s | |
+| concurrent write | bdk_redb | 2 | 89.94 ms | 98.55 ms | 11.1/s | |
+| concurrent write | bdk_redb | 4 | 85.05 ms | 120.79 ms | 11.8/s | |
+| concurrent write | bdk_redb | 8 | 82.49 ms | 93.35 ms | 12.1/s | |
+| open existing database | bdk_redb | - | 44.39 ms | 45.83 ms | 22.5/s | |
 
 #### On-disk storage
 
@@ -146,7 +147,7 @@ Dataset: 64 distinct wallet changesets (16 transactions each).
 
 | Backend | Bytes | MiB |
 | --- | ---: | ---: |
-| bdk_turso | 5081536 | 4.85 |
+| bdk_turso | 2998416 | 2.86 |
 | bdk_sqlite | 1253376 | 1.20 |
 | bdk_redb | 4755456 | 4.54 |
 
