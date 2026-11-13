@@ -115,29 +115,24 @@ Generated on 2026-11-13T15:21:24Z with 5 samples and 1 warmup sample (quick mode
 
 #### Workload timings
 
+Rows are grouped by workload and ordered fastest to slowest so the backends can be compared side by side. Only the 8-writer concurrent case is shown; the suite also measures 1, 2, and 4 writers.
+
+In this quick run, `bdk_sqlite` was fastest for writes, 8-writer concurrent throughput, database opens, and on-disk storage. `bdk_redb` was fastest for reads but slowest for writes and opens. `bdk_turso` was second for writes, reads, and opens, but slowest at 8 concurrent writers. Quick mode uses few samples, so treat these rankings as indicative rather than definitive.
+
 | Workload | Backend | Writers | Median | p95 | Throughput | Notes |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| write changeset | bdk_turso | - | 37.06 ms | 40.09 ms | 27.0/s | |
-| read changeset | bdk_turso | - | 2.03 ms | 2.57 ms | 493.3/s | |
-| concurrent write | bdk_turso | 1 | 44.65 ms | 215.44 ms | 22.4/s | |
-| concurrent write | bdk_turso | 2 | 36.65 ms | 50.32 ms | 27.3/s | |
-| concurrent write | bdk_turso | 4 | 56.02 ms | 126.84 ms | 17.9/s | |
-| concurrent write | bdk_turso | 8 | 154.61 ms | 206.41 ms | 6.5/s | |
-| open existing database | bdk_turso | - | 1.66 ms | 2.57 ms | 603.9/s | |
-| write changeset | bdk_sqlite | - | 11.76 ms | 12.28 ms | 85.0/s | |
-| read changeset | bdk_sqlite | - | 3.99 ms | 5.33 ms | 250.8/s | |
-| concurrent write | bdk_sqlite | 1 | 17.27 ms | 35.00 ms | 57.9/s | |
-| concurrent write | bdk_sqlite | 2 | 18.19 ms | 18.98 ms | 55.0/s | |
-| concurrent write | bdk_sqlite | 4 | 19.30 ms | 26.96 ms | 51.8/s | |
-| concurrent write | bdk_sqlite | 8 | 33.37 ms | 35.09 ms | 30.0/s | |
-| open existing database | bdk_sqlite | - | 406.76 µs | 541.72 µs | 2.5k/s | |
-| write changeset | bdk_redb | - | 118.00 ms | 130.66 ms | 8.5/s | |
-| read changeset | bdk_redb | - | 457.11 µs | 558.12 µs | 2.2k/s | |
-| concurrent write | bdk_redb | 1 | 106.63 ms | 118.82 ms | 9.4/s | |
-| concurrent write | bdk_redb | 2 | 89.94 ms | 98.55 ms | 11.1/s | |
-| concurrent write | bdk_redb | 4 | 85.05 ms | 120.79 ms | 11.8/s | |
-| concurrent write | bdk_redb | 8 | 82.49 ms | 93.35 ms | 12.1/s | |
-| open existing database | bdk_redb | - | 44.39 ms | 45.83 ms | 22.5/s | |
+| write changeset | bdk_sqlite | - | 11.76 ms | 12.28 ms | 85.0/s | Fastest |
+| write changeset | bdk_turso | - | 37.06 ms | 40.09 ms | 27.0/s | Second |
+| write changeset | bdk_redb | - | 118.00 ms | 130.66 ms | 8.5/s | Slowest |
+| read changeset | bdk_redb | - | 457.11 µs | 558.12 µs | 2.2k/s | Fastest |
+| read changeset | bdk_turso | - | 2.03 ms | 2.57 ms | 493.3/s | Second |
+| read changeset | bdk_sqlite | - | 3.99 ms | 5.33 ms | 250.8/s | Slowest |
+| concurrent write | bdk_sqlite | 8 | 33.37 ms | 35.09 ms | 30.0/s | Fastest |
+| concurrent write | bdk_redb | 8 | 82.49 ms | 93.35 ms | 12.1/s | Second |
+| concurrent write | bdk_turso | 8 | 154.61 ms | 206.41 ms | 6.5/s | Slowest |
+| open existing database | bdk_sqlite | - | 406.76 µs | 541.72 µs | 2.5k/s | Fastest |
+| open existing database | bdk_turso | - | 1.66 ms | 2.57 ms | 603.9/s | Second |
+| open existing database | bdk_redb | - | 44.39 ms | 45.83 ms | 22.5/s | Slowest |
 
 #### On-disk storage
 
@@ -145,11 +140,11 @@ Total bytes of all files belonging to the seeded database, measured immediately 
 
 Dataset: 64 distinct wallet changesets (16 transactions each).
 
-| Backend | Bytes | MiB |
-| --- | ---: | ---: |
-| bdk_turso | 2998416 | 2.86 |
-| bdk_sqlite | 1253376 | 1.20 |
-| bdk_redb | 4755456 | 4.54 |
+| Backend | Bytes | MiB | Notes |
+| --- | ---: | ---: | --- |
+| bdk_sqlite | 1253376 | 1.20 | Smallest |
+| bdk_turso | 2998416 | 2.86 | Second |
+| bdk_redb | 4755456 | 4.54 | Largest |
 
 #### Workload definition
 
