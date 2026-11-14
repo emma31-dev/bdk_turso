@@ -312,7 +312,7 @@ impl AsyncWalletPersister for Store {
     where
         Self: 'a,
     {
-        Box::pin(async { persister.write_changeset(changeset).await })
+        Box::pin(persister.write_changeset(changeset))
     }
 }
 
