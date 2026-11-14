@@ -271,21 +271,22 @@ type FutureResult<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send +
 /// Drive `future` to completion on a dedicated thread with its own Tokio runtime.
 ///
 /// Blocking on the calling thread would deadlock or panic when that thread is already running an
-/// async runtime, so the wait happens on a scoped helper thread instead.
+/// async runtime, so the wait happens on a scoped helper thread instead. A failure to build the
+/// helper runtime is returned as [`Error::BlockingRuntime`] rather than panicking.
 #[cfg(feature = "blocking")]
-fn block_on<F, T>(future: F) -> T
+fn block_on<F, T>(future: F) -> Result<T, Error>
 where
-    F: Future<Output = T> + Send,
+    F: Future<Output = Result<T, Error>> + Send,
     T: Send,
 {
     std::thread::scope(|scope| {
         scope
             .spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
+                let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .expect("failed to build a Tokio runtime")
-                    .block_on(future)
+                    .map_err(Error::BlockingRuntime)?;
+                runtime.block_on(future)
             })
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))

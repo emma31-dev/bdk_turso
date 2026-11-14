@@ -2,6 +2,12 @@
 
 Notable changes to `bdk_turso` are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- The blocking `WalletPersister` now returns `Error::BlockingRuntime` instead of panicking when its helper Tokio runtime cannot be built.
+
 ## [0.3.1]
 
 ### Added

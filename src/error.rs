@@ -28,6 +28,9 @@ pub enum Error {
     Migration(String),
     /// Two or more database options cannot be used together.
     ConflictingOptions(String),
+    /// The blocking persister could not build its Tokio runtime.
+    #[cfg(feature = "blocking")]
+    BlockingRuntime(std::io::Error),
     /// A requested database option is unsupported for the selected store type.
     #[cfg(feature = "remote")]
     UnsupportedOption(String),
@@ -57,6 +60,8 @@ impl fmt::Display for Error {
             Self::ConflictingOptions(message) => {
                 write!(f, "Conflicting Options Error: {message}")
             }
+            #[cfg(feature = "blocking")]
+            Self::BlockingRuntime(e) => write!(f, "Blocking Runtime Error: {e}"),
             #[cfg(feature = "remote")]
             Self::RemotePush(e) => write!(f, "Remote Push Error: {e}"),
             Self::Turso(e) => write!(f, "Turso Error: {e}"),
