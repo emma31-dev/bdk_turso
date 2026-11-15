@@ -14,37 +14,25 @@
 </div>
 
 
-## Project status
-
-`bdk_turso` is early-stage and experimental. It currently implements async wallet persistence, and its API may change. `bdk_turso` was built in response to a request for Turso support in bdk_wallet.
-
 ## What is bdk_turso?
 
-`bdk_turso` is a standalone persistence backend for [`bdk_wallet`](https://docs.rs/bdk_wallet), storing wallet state in [Turso](https://turso.tech/), an in-process, SQLite-compatible database written in Rust. It implements the `AsyncWalletPersister` trait behind the `wallet` feature and `WalletPersister` trait behing `blocking`, without changes to `bdk_wallet` or `bdk_persist`.
+`bdk_turso` is a standalone persistence backend for [`bdk_wallet`](https://docs.rs/bdk_wallet), storing wallet state in [Turso](https://turso.tech/), an in-process, SQLite-compatible database written in Rust. It implements the `AsyncWalletPersister` trait behind the `wallet` feature and `WalletPersister` trait behind `blocking`, without changes to `bdk_wallet` or `bdk_persist`.
 
 `bdk_turso` is forked from [`bdk_sqlite`](https://docs.rs/bdk_sqlite), with its persistence implementation adapted for Turso's async-first API. Its persistence tests are adapted from the test suite in [`bdk_redb`](https://docs.rs/bdk_redb).
 
-## Why Turso?
+### Project status
 
-### Native async persistence
+`bdk_turso` is early-stage and experimental. It currently implements async wallet persistence, and its API may change. `bdk_turso` was built in response to a request for Turso support in bdk_wallet.
+
+### Why Turso?
+
+#### Native async persistence
 
 Turso's async-first design allows `bdk_turso` to implement `AsyncWalletPersister` natively rather than wrapping blocking database operations in `spawn_blocking`. Turso is designed to support concurrent write scaling. Connections wait up to five seconds for a contended write lock before returning an error, matching the default used by SQLite drivers. Reproducible comparisons with `bdk_sqlite` and `bdk_redb` are published in [BENCHMARK.md](BENCHMARK.md); results are workload- and machine-dependent and do not imply that one backend is best for every use case.
 
-### SQLite compatibility
+#### SQLite compatibility
 
 `bdk_turso` stays within Turso's SQLite-compatible feature subset and avoids Turso-only extensions. Unencrypted database files can be read by `bdk_sqlite`; Turso-encrypted files require Turso to open. Do not call `bdk_sqlite::Store::migrate()` on a `bdk_turso` database: it has no SQLx migration history, so `bdk_sqlite` runs migrations containing `DROP TABLE IF EXISTS` statements and erases the existing wallet state.
-
-## Benchmarks
-
-The repository includes a reproducible benchmark suite in [`benches/backends.rs`](benches/backends.rs) that runs the same generated wallet changesets through `bdk_turso`, `bdk_sqlite`, and `bdk_redb`. It measures changeset read and write speed, concurrent writes at several writer counts, opening an existing database, and on-disk storage size. Run it with:
-
-```sh
-cargo bench --bench backends
-```
-
-Sample counts, batch sizes, writer counts, dataset shape, Turso options, and the included backends can be set in an optional `benches/config.toml`; copy `benches/example.toml` to that path and edit it, or pass `-- --config path/to/config.toml`. Without a config file the defaults are used.
-
-Detailed results, environment details, methodology, and limitations are in [BENCHMARK.md](BENCHMARK.md). Results are kept for each measured release and are not CI performance thresholds.
 
 ## Installation
 
@@ -66,6 +54,17 @@ bdk_turso = { version = "0.3", features = ["wallet", "psbt"] }
 ```
 
 Open a store and call `Store::migrate()` before reading or writing; tables for disabled features are not created. See [Feature flags](#feature-flags) for the full list.
+
+## Feature flags
+
+`Store::migrate()` always creates the core block and transaction tables. Wallet-specific and PSBT tables are created only when their respective features are enabled. The default schema also creates B-tree indexes for `block(hash)`, `txout(script)`, `anchor(txid)`, and `anchor(block_hash)`; the `wallet` schema adds `keychain_script_pubkey(script)`.
+
+| Feature | Description |
+| --- | --- |
+| `wallet` | Enables wallet-specific tables, the `AsyncWalletPersister` implementation, and (through `blocking`) the blocking `WalletPersister`. |
+| `blocking` | Implements the blocking `WalletPersister` for `Store`. Enabled by default by `wallet`. |
+| `psbt` | Enables the PSBT table and the `write_psbt`/`read_psbt` storage methods; independent of `wallet`. |
+| `remote` | Enables Turso Cloud sync with a local cache. |
 
 ## Usage
 
@@ -185,6 +184,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Local at-rest encryption and `with_mvcc_passive_checkpoint` are rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
 
+## Remote Turso
+
+Enable the `remote` feature to connect to Turso Cloud through Turso's local sync engine. The store keeps a local cache at the supplied path, pulls remote changes before reads, and pushes committed writes. An upload can fail after the local commit; the cache retains the change and the persistence operation returns `Error::RemotePush`. Call `store.push().await` to retry uploading pending changes without reapplying the changeset; a failure from this call is also reported as `Error::RemotePush`. The cache is not encrypted by Turso Cloud encryption; configure `Options::with_remote_encryption` for Turso Cloud database encryption and protect the local cache separately.
+
+```rust,ignore
+use bdk_turso::Store;
+
+let store = Store::new_remote(
+    "wallet-cache.db",
+    &remote_url,
+    &auth_token,
+).await?;
+store.migrate().await?;
+```
+
+Local at-rest encryption, MVCC passive checkpointing, and `TransactionBehavior::Concurrent` are not supported by Turso's remote sync builder and return an error if requested. The ignored sync integration test can target a disposable Turso Cloud database or a local Turso sync server. Set `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` to the endpoint and token accepted by that server, then run `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.
+
 ## PSBT persistence
 
 Enable the `psbt` feature to store partially signed transactions. It provides `Store::write_psbt` and `Store::read_psbt` and is independent of the `wallet` feature; `Store::migrate()` creates the `psbt` table only when the feature is enabled.
@@ -207,6 +223,18 @@ This lets an unsigned PSBT survive a restart, be signed later, and be written ba
 
 `bdk_turso` uses last-write-wins behavior for keyed persistence writes: when an incoming write targets an existing key, its value replaces the stored value rather than being ignored. This applies to component and wallet changeset writes, including a replacement block hash at the same height, and to PSBT writes. Explicit deletion entries remove their rows. This is storage-level behavior, not semantic validation of which value is newer or correct; ordering between independent remote clients follows Turso's sync behavior.
 
+## Benchmarks
+
+The repository includes a reproducible benchmark suite in [`benches/backends.rs`](benches/backends.rs) that runs the same generated wallet changesets through `bdk_turso`, `bdk_sqlite`, and `bdk_redb`. It measures changeset read and write speed, concurrent writes at several writer counts, opening an existing database, and on-disk storage size. Run it with:
+
+```sh
+cargo bench --bench backends
+```
+
+Sample counts, batch sizes, writer counts, dataset shape, Turso options, and the included backends can be set in an optional `benches/config.toml`; copy `benches/example.toml` to that path and edit it, or pass `-- --config path/to/config.toml`. Without a config file the defaults are used.
+
+Detailed results, environment details, methodology, and limitations are in [BENCHMARK.md](BENCHMARK.md). Results are kept for each measured release and are not CI performance thresholds.
+
 ## Examples
 
 Both examples read `examples/config.toml`. Copy the committed template and edit the local copy:
@@ -219,34 +247,6 @@ cp examples/example.toml examples/config.toml
 
 - `cargo run --example wallet` loads the config, creates or loads the wallet, reveals a receive address, and syncs with a local Bitcoin Core regtest node.
 - `cargo run --features psbt --example transaction` syncs a regtest wallet, stores and reloads an unsigned PSBT, confirms it round-trips, signs it, broadcasts it, and persists the resulting wallet changeset. It requires `encryption_hexkey`. `recipient_address` is optional until this example reaches the send step; if the wallet has no spendable funds, it prints a receive address — fund it, mine 101 blocks, then rerun.
-
-## Remote Turso
-
-Enable the `remote` feature to connect to Turso Cloud through Turso's local sync engine. The store keeps a local cache at the supplied path, pulls remote changes before reads, and pushes committed writes. An upload can fail after the local commit; the cache retains the change and the persistence operation returns `Error::RemotePush`. Call `store.push().await` to retry uploading pending changes without reapplying the changeset; a failure from this call is also reported as `Error::RemotePush`. The cache is not encrypted by Turso Cloud encryption; configure `Options::with_remote_encryption` for Turso Cloud database encryption and protect the local cache separately.
-
-```rust,ignore
-use bdk_turso::Store;
-
-let store = Store::new_remote(
-    "wallet-cache.db",
-    &remote_url,
-    &auth_token,
-).await?;
-store.migrate().await?;
-```
-
-Local at-rest encryption, MVCC passive checkpointing, and `TransactionBehavior::Concurrent` are not supported by Turso's remote sync builder and return an error if requested. The ignored sync integration test can target a disposable Turso Cloud database or a local Turso sync server. Set `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` to the endpoint and token accepted by that server, then run `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.
-
-## Feature flags
-
-`Store::migrate()` always creates the core block and transaction tables. Wallet-specific and PSBT tables are created only when their respective features are enabled. The default schema also creates B-tree indexes for `block(hash)`, `txout(script)`, `anchor(txid)`, and `anchor(block_hash)`; the `wallet` schema adds `keychain_script_pubkey(script)`.
-
-| Feature | Description |
-| --- | --- |
-| `wallet` | Enables wallet-specific tables, the `AsyncWalletPersister` implementation, and (through `blocking`) the blocking `WalletPersister`. |
-| `blocking` | Implements the blocking `WalletPersister` for `Store`. Enabled by default by `wallet`. |
-| `psbt` | Enables the PSBT table and the `write_psbt`/`read_psbt` storage methods; independent of `wallet`. |
-| `remote` | Enables Turso Cloud sync with a local cache. |
 
 ## Minimum Supported Rust Version (MSRV)
 
