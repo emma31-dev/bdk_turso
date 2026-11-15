@@ -37,6 +37,15 @@ pub enum Error {
     /// A remote push failed after local changes were committed.
     #[cfg(feature = "remote")]
     RemotePush(turso::Error),
+    /// A remote pull failed while refreshing the local sync cache.
+    #[cfg(feature = "remote")]
+    RemotePull(turso::Error),
+    /// A remote cache checkpoint failed.
+    #[cfg(feature = "remote")]
+    RemoteCheckpoint(turso::Error),
+    /// Remote cache statistics could not be read.
+    #[cfg(feature = "remote")]
+    RemoteStats(turso::Error),
     /// A Turso operation failed while opening, querying, or updating the database.
     Turso(turso::Error),
 }
@@ -64,6 +73,12 @@ impl fmt::Display for Error {
             Self::BlockingRuntime(e) => write!(f, "Blocking Runtime Error: {e}"),
             #[cfg(feature = "remote")]
             Self::RemotePush(e) => write!(f, "Remote Push Error: {e}"),
+            #[cfg(feature = "remote")]
+            Self::RemotePull(e) => write!(f, "Remote Pull Error: {e}"),
+            #[cfg(feature = "remote")]
+            Self::RemoteCheckpoint(e) => write!(f, "Remote Checkpoint Error: {e}"),
+            #[cfg(feature = "remote")]
+            Self::RemoteStats(e) => write!(f, "Remote Stats Error: {e}"),
             Self::Turso(e) => write!(f, "Turso Error: {e}"),
         }
     }

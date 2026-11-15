@@ -4,6 +4,13 @@ Notable changes to `bdk_turso` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Public `Store::pull()` refreshes a remote store's local cache and reports whether remote changes were applied. It returns `Ok(false)` for local stores, matching `Store::push()`.
+- Remote cache lifecycle methods: `Store::checkpoint()` reclaims cache WAL space, `Store::flush_cache()` pushes pending changes and then checkpoints, `Store::cache_stats()` returns a crate-owned `CacheStats`, and `Store::cache_path()` returns the local cache file path. These are no-ops or return `None` for local stores.
+- Remote sync configuration on `Options`: `with_bootstrap_if_empty`, `with_long_poll_timeout`, `with_client_name`, `with_auth_token_fn`, `with_partial_sync_opts_experimental`, and `with_logical_mvcc_pull`. `PartialSyncOpts` and `PartialBootstrapStrategy` are re-exported from Turso. Local stores reject these options with `Error::UnsupportedOption`.
+- `Error::RemotePull`, `Error::RemoteCheckpoint`, and `Error::RemoteStats` identify failures from the new cache methods.
+
 ### Fixed
 
 - The blocking `WalletPersister` now returns `Error::BlockingRuntime` instead of panicking when its helper Tokio runtime cannot be built.

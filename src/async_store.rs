@@ -12,7 +12,7 @@ use bitcoin::hex::DisplayHex;
 use bitcoin::{Amount, BlockHash, OutPoint, ScriptBuf, Transaction, TxOut, Txid, consensus};
 pub use turso::EncryptionOpts;
 #[cfg(feature = "remote")]
-pub use turso::sync::RemoteEncryptionCipher;
+pub use turso::sync::{PartialBootstrapStrategy, PartialSyncOpts, RemoteEncryptionCipher};
 pub use turso::transaction::TransactionBehavior;
 use turso::{
     Builder, Connection, Database as LocalDatabase, Value,
@@ -76,6 +76,24 @@ pub struct Options {
     #[cfg(feature = "remote")]
     /// Enables Turso Cloud encryption; this does not encrypt the local sync cache.
     remote_encryption: Option<(String, RemoteEncryptionCipher)>,
+    #[cfg(feature = "remote")]
+    /// Overrides Turso's empty-database bootstrap behavior for remote caches.
+    bootstrap_if_empty: Option<bool>,
+    #[cfg(feature = "remote")]
+    /// Long-poll timeout used while waiting for remote changes.
+    long_poll_timeout: Option<Duration>,
+    #[cfg(feature = "remote")]
+    /// Client name reported to the Turso sync engine.
+    client_name: Option<String>,
+    #[cfg(feature = "remote")]
+    /// Async auth-token provider applied before every sync request.
+    auth_token_fn: Option<turso::sync::AuthTokenFn>,
+    #[cfg(feature = "remote")]
+    /// Experimental partial-sync configuration.
+    partial_sync_opts: Option<PartialSyncOpts>,
+    #[cfg(feature = "remote")]
+    /// Overrides the incremental pull protocol.
+    logical_mvcc_pull: Option<bool>,
 }
 
 impl Options {
@@ -217,6 +235,106 @@ impl Options {
         self.remote_encryption = Some((base64_key.into(), cipher));
         self
     }
+
+    /// Control whether an empty local cache downloads the remote schema and data.
+    ///
+    /// Turso bootstraps an empty cache by default. Pass `false` for a deferred bootstrap, for
+    /// example when the application wants to inspect or pre-seed the cache before the first sync.
+    /// This setting is available with the `remote` feature and is rejected by local stores.
+    #[cfg(feature = "remote")]
+    pub fn with_bootstrap_if_empty(mut self, enable: bool) -> Self {
+        self.bootstrap_if_empty = Some(enable);
+        self
+    }
+
+    /// Set how long the sync engine long-polls for remote changes.
+    ///
+    /// A longer timeout reduces request frequency while waiting for changes; a shorter timeout
+    /// returns control to the caller sooner. This setting is available with the `remote` feature,
+    /// only applies to remote stores, and is rejected by local stores.
+    #[cfg(feature = "remote")]
+    pub fn with_long_poll_timeout(mut self, timeout: Duration) -> Self {
+        self.long_poll_timeout = Some(timeout);
+        self
+    }
+
+    /// Set the client name reported to the Turso sync engine.
+    ///
+    /// Turso defaults to `turso-sync-rust`. Use a stable application-specific name so server-side
+    /// telemetry and tracing can distinguish clients. This setting is available with the `remote`
+    /// feature, only applies to remote stores, and is rejected by local stores.
+    #[cfg(feature = "remote")]
+    pub fn with_client_name(mut self, name: impl Into<String>) -> Self {
+        self.client_name = Some(name.into());
+        self
+    }
+
+    /// Provide an async callback that returns a fresh auth token for every sync request.
+    ///
+    /// Use this for rotating credentials instead of passing a static token to
+    /// [`Store::new_remote`]. The callback is invoked before each HTTP request, and an error it
+    /// returns fails the in-flight sync operation. Calling this overrides the static token supplied
+    /// to [`Store::new_remote_with_options`]. This setting is available with the `remote` feature,
+    /// only applies to remote stores, and is rejected by local stores.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "remote")]
+    /// # fn example() {
+    /// use bdk_turso::Options;
+    ///
+    /// let options = Options::new().with_auth_token_fn(|| async {
+    ///     Ok::<_, turso::Error>("fresh-token".to_owned())
+    /// });
+    /// # }
+    /// ```
+    #[cfg(feature = "remote")]
+    pub fn with_auth_token_fn<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<String, turso::Error>> + Send + 'static,
+    {
+        self.auth_token_fn = Some(Arc::new(move || -> turso::sync::AuthTokenFut {
+            Box::pin(f())
+        }));
+        self
+    }
+
+    /// Configure experimental partial synchronization for the local cache.
+    ///
+    /// Partial sync downloads only a segment of the remote database, which bounds cache size for
+    /// large databases. This is a Turso experimental feature; [`PartialSyncOpts`] and
+    /// [`PartialBootstrapStrategy`] are re-exported from Turso. This setting is available with the
+    /// `remote` feature, only applies to remote stores, and is rejected by local stores.
+    #[cfg(feature = "remote")]
+    pub fn with_partial_sync_opts_experimental(mut self, opts: PartialSyncOpts) -> Self {
+        self.partial_sync_opts = Some(opts);
+        self
+    }
+
+    /// Force the incremental pull protocol instead of letting Turso auto-detect it.
+    ///
+    /// `true` forces MVCC logical-log pulls and `false` forces page-stream pulls. Turso normally
+    /// detects the remote protocol on the first pull and persists the result, so this is only an
+    /// escape hatch for tests or unusual deployments. This setting is available with the `remote`
+    /// feature, only applies to remote stores, and is rejected by local stores.
+    #[cfg(feature = "remote")]
+    pub fn with_logical_mvcc_pull(mut self, enable: bool) -> Self {
+        self.logical_mvcc_pull = Some(enable);
+        self
+    }
+
+    /// Return whether any remote-sync cache option was configured.
+    #[cfg(feature = "remote")]
+    fn has_sync_cache_options(&self) -> bool {
+        self.bootstrap_if_empty.is_some()
+            || self.long_poll_timeout.is_some()
+            || self.client_name.is_some()
+            || self.auth_token_fn.is_some()
+            || self.partial_sync_opts.is_some()
+            || self.logical_mvcc_pull.is_some()
+    }
 }
 
 /// Generate local encryption options with a random 32-byte key and the `aes256gcm` cipher.
@@ -271,7 +389,57 @@ impl fmt::Debug for Options {
                     false
                 }
             })
+            .field("remote_cache_configured", &{
+                #[cfg(feature = "remote")]
+                {
+                    self.has_sync_cache_options()
+                }
+                #[cfg(not(feature = "remote"))]
+                {
+                    false
+                }
+            })
             .finish()
+    }
+}
+
+/// Statistics for a remote store's local Turso sync cache.
+///
+/// Returned by [`Store::cache_stats`]. Local stores do not have a sync cache, so `cache_stats`
+/// returns `None` for them. Sizes are in bytes and times are Unix timestamps in seconds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CacheStats {
+    /// Number of change-data-capture operations recorded in the cache.
+    pub cdc_operations: i64,
+    /// Size of the main write-ahead log in bytes.
+    pub main_wal_size: u64,
+    /// Size of the revert write-ahead log in bytes.
+    pub revert_wal_size: u64,
+    /// Unix time of the last successful pull, if the cache has ever pulled.
+    pub last_pull_unix_time: Option<i64>,
+    /// Unix time of the last successful push, if the cache has ever pushed.
+    pub last_push_unix_time: Option<i64>,
+    /// Remote revision last applied to the cache, if known.
+    pub revision: Option<String>,
+    /// Bytes sent to Turso Cloud over the sync protocol.
+    pub network_sent_bytes: usize,
+    /// Bytes received from Turso Cloud over the sync protocol.
+    pub network_received_bytes: usize,
+}
+
+#[cfg(feature = "remote")]
+impl From<turso::sync::DatabaseSyncStats> for CacheStats {
+    fn from(stats: turso::sync::DatabaseSyncStats) -> Self {
+        Self {
+            cdc_operations: stats.cdc_operations,
+            main_wal_size: stats.main_wal_size,
+            revert_wal_size: stats.revert_wal_size,
+            last_pull_unix_time: stats.last_pull_unix_time,
+            last_push_unix_time: stats.last_push_unix_time,
+            revision: stats.revision,
+            network_sent_bytes: stats.network_sent_bytes,
+            network_received_bytes: stats.network_received_bytes,
+        }
     }
 }
 
@@ -288,6 +456,7 @@ impl fmt::Debug for Options {
 pub struct Store {
     pub(crate) database: StoreDatabase,
     options: Option<Options>,
+    cache_path: Option<String>,
 }
 
 #[derive(Clone)]
@@ -377,6 +546,14 @@ impl Store {
             ));
         }
 
+        #[cfg(feature = "remote")]
+        if options.has_sync_cache_options() {
+            return Err(Error::UnsupportedOption(
+                "remote sync cache options can only be used with Store::new_remote_with_options"
+                    .into(),
+            ));
+        }
+
         let mut builder = Builder::new_local(path)
             .experimental_index_method(options.index_method)
             .experimental_multiprocess_wal(options.multiprocess_wal)
@@ -402,6 +579,7 @@ impl Store {
         Ok(Self {
             database: StoreDatabase::Local(database),
             options: Some(options),
+            cache_path: None,
         })
     }
 
@@ -481,6 +659,24 @@ impl Store {
             .experimental_generated_columns(options.generated_columns)
             .experimental_without_rowid(options.without_rowid);
 
+        if let Some(bootstrap_if_empty) = options.bootstrap_if_empty {
+            builder = builder.bootstrap_if_empty(bootstrap_if_empty);
+        }
+        if let Some(timeout) = options.long_poll_timeout {
+            builder = builder.with_long_poll_timeout(timeout);
+        }
+        if let Some(client_name) = &options.client_name {
+            builder = builder.with_client_name(client_name.clone());
+        }
+        if let Some(auth_token_fn) = options.auth_token_fn.clone() {
+            builder = builder.with_auth_token_fn(move || auth_token_fn());
+        }
+        if let Some(partial_sync_opts) = &options.partial_sync_opts {
+            builder = builder.with_partial_sync_opts_experimental(partial_sync_opts.clone());
+        }
+        if let Some(logical_mvcc_pull) = options.logical_mvcc_pull {
+            builder = builder.with_logical_mvcc_pull(logical_mvcc_pull);
+        }
         if let Some((key, cipher)) = &options.remote_encryption {
             builder = builder.with_remote_encryption(key.clone(), *cipher);
         }
@@ -489,6 +685,7 @@ impl Store {
         Ok(Self {
             database: StoreDatabase::Remote(database),
             options: Some(options),
+            cache_path: Some(local_path.to_owned()),
         })
     }
 
@@ -501,6 +698,7 @@ impl Store {
         Self {
             database: StoreDatabase::Local(database),
             options: None,
+            cache_path: None,
         }
     }
 
@@ -558,6 +756,93 @@ impl Store {
             #[cfg(feature = "remote")]
             StoreDatabase::Remote(database) => database.push().await.map_err(Error::RemotePush),
         }
+    }
+
+    /// Pull remote changes into the local sync cache.
+    ///
+    /// Returns `true` when remote changes were applied and `false` when the cache was already
+    /// current. This is a no-op that returns `Ok(false)` for local stores, matching [`Store::push`].
+    ///
+    /// This only pulls; it does not upload local changes. Remote persistence methods already pull
+    /// implicitly before every operation, so call this when you need an explicit refresh, for
+    /// example before going offline or before a read-heavy phase.
+    ///
+    /// # Errors
+    ///
+    /// A failed pull returns [`Error::RemotePull`].
+    pub async fn pull(&self) -> Result<bool, Error> {
+        match &self.database {
+            StoreDatabase::Local(_) => Ok(false),
+            #[cfg(feature = "remote")]
+            StoreDatabase::Remote(database) => database.pull().await.map_err(Error::RemotePull),
+        }
+    }
+
+    /// Force a write-ahead-log checkpoint of the local sync cache.
+    ///
+    /// Large changesets can leave the cache's WAL files large after the data is committed. A
+    /// checkpoint folds the WAL back into the main database file and reclaims that space. This is a
+    /// no-op for local stores, which do not use a sync cache.
+    ///
+    /// Turso retries a busy checkpoint internally (up to 100 attempts at 10 ms) before returning an
+    /// error. This only affects the local cache; it does not contact Turso Cloud.
+    ///
+    /// # Errors
+    ///
+    /// A failed checkpoint returns [`Error::RemoteCheckpoint`].
+    pub async fn checkpoint(&self) -> Result<(), Error> {
+        match &self.database {
+            StoreDatabase::Local(_) => Ok(()),
+            #[cfg(feature = "remote")]
+            StoreDatabase::Remote(database) => {
+                database.checkpoint().await.map_err(Error::RemoteCheckpoint)
+            }
+        }
+    }
+
+    /// Leave the local sync cache fully uploaded and compacted.
+    ///
+    /// This calls [`Store::push`] to upload pending local changes and then [`Store::checkpoint`] to
+    /// fold and reclaim the cache WAL. It does not pull remote changes. For local stores both steps
+    /// are no-ops, so this returns `Ok(())`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RemotePush`] if the upload fails, or [`Error::RemoteCheckpoint`] if the
+    /// checkpoint fails. A failed push leaves the local changes in the cache for a later retry.
+    pub async fn flush_cache(&self) -> Result<(), Error> {
+        self.push().await?;
+        self.checkpoint().await
+    }
+
+    /// Return statistics for the local sync cache, or `None` for local stores.
+    ///
+    /// The returned [`CacheStats`] is owned by this crate, so `turso` types do not leak into the
+    /// public API. It reports WAL sizes, last pull and push times, the last applied revision, sync
+    /// network bytes, and change-data-capture operations.
+    ///
+    /// # Errors
+    ///
+    /// A failed stats read returns [`Error::RemoteStats`].
+    pub async fn cache_stats(&self) -> Result<Option<CacheStats>, Error> {
+        match &self.database {
+            StoreDatabase::Local(_) => Ok(None),
+            #[cfg(feature = "remote")]
+            StoreDatabase::Remote(database) => database
+                .stats()
+                .await
+                .map(|stats| Some(CacheStats::from(stats)))
+                .map_err(Error::RemoteStats),
+        }
+    }
+
+    /// Return the path of the local sync cache file, or `None` for local stores.
+    ///
+    /// Use this to locate the cache for disk-usage checks or to move it with the application's data
+    /// directory. The path is the `local_path` passed to [`Store::new_remote`] or
+    /// [`Store::new_remote_with_options`].
+    pub fn cache_path(&self) -> Option<&str> {
+        self.cache_path.as_deref()
     }
 
     /// Apply the default schema and schemas for enabled features in a transaction.
@@ -1201,7 +1486,15 @@ mod test {
         assert!(options.transaction_behavior.is_none());
         assert!(options.encryption.is_none());
         #[cfg(feature = "remote")]
-        assert!(options.remote_encryption.is_none());
+        {
+            assert!(options.remote_encryption.is_none());
+            assert!(options.bootstrap_if_empty.is_none());
+            assert!(options.long_poll_timeout.is_none());
+            assert!(options.client_name.is_none());
+            assert!(options.auth_token_fn.is_none());
+            assert!(options.partial_sync_opts.is_none());
+            assert!(options.logical_mvcc_pull.is_none());
+        }
     }
 
     #[test]
@@ -1265,6 +1558,67 @@ mod test {
             .unwrap_err();
         assert!(
             matches!(error, Error::UnsupportedOption(message) if message.contains("remote encryption"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_stores_have_no_remote_cache_surface() -> anyhow::Result<()> {
+        let store = Store::new_memory().await?;
+        assert!(!store.pull().await?);
+        store.checkpoint().await?;
+        store.flush_cache().await?;
+        assert!(store.cache_stats().await?.is_none());
+        assert!(store.cache_path().is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn remote_cache_options_are_recorded() {
+        let partial = PartialSyncOpts {
+            bootstrap_strategy: None,
+            segment_size: 4096,
+            prefetch: true,
+        };
+        let options = Options::new()
+            .with_bootstrap_if_empty(false)
+            .with_long_poll_timeout(Duration::from_secs(5))
+            .with_client_name("bdk-turso-test")
+            .with_partial_sync_opts_experimental(partial)
+            .with_logical_mvcc_pull(true);
+
+        assert_eq!(options.bootstrap_if_empty, Some(false));
+        assert_eq!(options.long_poll_timeout, Some(Duration::from_secs(5)));
+        assert_eq!(options.client_name.as_deref(), Some("bdk-turso-test"));
+        assert!(options.partial_sync_opts.is_some());
+        assert_eq!(options.logical_mvcc_pull, Some(true));
+        assert!(options.has_sync_cache_options());
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn auth_token_fn_is_recorded_and_callable() {
+        let options = Options::new()
+            .with_auth_token_fn(|| async { Ok::<_, turso::Error>("rotated-token".to_owned()) });
+        let token_fn = options
+            .auth_token_fn
+            .as_ref()
+            .expect("auth token callback is recorded");
+        assert_eq!(
+            token_fn().await.expect("token callback succeeds"),
+            "rotated-token"
+        );
+    }
+
+    #[cfg(feature = "remote")]
+    #[tokio::test]
+    async fn remote_cache_options_are_rejected_by_local_stores() -> anyhow::Result<()> {
+        let error = Store::new_with_options(":memory:", Options::new().with_client_name("local"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::UnsupportedOption(message) if message.contains("remote sync cache options"))
         );
         Ok(())
     }
