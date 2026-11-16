@@ -1,12 +1,19 @@
 [package]
 name = "bdk_turso"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Emmanuel Fidelis"]
 rust-version = "1.88.0"
 edition = "2024"
 description = "Turso persistence backend for BDK"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/emma31-dev/bdk_turso"
+documentation = "https://docs.rs/bdk_turso"
+exclude = [".DS_Store", "ISSUES.md", "proposal.md", "proposal-v2.md"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 bdk_chain = { version = "0.23.3", features = ["miniscript"] }

@@ -19,7 +19,9 @@ For code changes, run the checks relevant to your change. The CI workflow runs:
 ```sh
 cargo fmt --all -- --check
 cargo test --all-targets --locked
+cargo test --all-targets --all-features --locked
 cargo check --no-default-features --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
 ```
 
 Please include the checks you ran in your pull request description, and note any that were not applicable or could not be run.
@@ -35,3 +37,7 @@ cargo bench --bench backends
 Settings such as sample counts, batch sizes, writer counts, dataset shape, Turso options, and enabled backends are read from the optional `benches/config.toml`. Copy `benches/example.toml` to that path to customize a run; the local file is ignored by git.
 
 See [BENCHMARK.md](BENCHMARK.md) for the workload, configuration options, methodology, limitations, and the procedure for publishing results before a release.
+
+## Releases
+
+Releases are published to crates.io and docs.rs by the `Publish` GitHub Actions workflow when a `v*` tag is pushed. See [RELEASING.md](RELEASING.md) for the release checklist, one-time trusted-publishing setup, and rollback procedure. Maintainers should follow that document rather than publishing manually.
