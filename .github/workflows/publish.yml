@@ -112,6 +112,8 @@ jobs:
             echo "::error::no changelog entry found for $version"
             exit 1
           fi
+          printf '\n**crates.io:** https://crates.io/crates/bdk_turso/%s\n**docs.rs:** https://docs.rs/bdk_turso/%s\n' \
+            "$version" "$version" >> release-notes.md
           gh release create "$GITHUB_REF_NAME" \
             --title "bdk_turso $version" \
             --notes-file release-notes.md
