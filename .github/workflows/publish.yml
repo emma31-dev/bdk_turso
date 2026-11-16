@@ -43,7 +43,7 @@ jobs:
           }
       - name: Check packaged files
         run: |
-          cargo package --list --locked > package-files.txt
+          cargo package --list --locked > "$RUNNER_TEMP/package-files.txt"
           for path in \
             README.md \
             migrations/0001_default_schema.up.sql \
@@ -52,7 +52,7 @@ jobs:
             examples/example.toml \
             examples/wallet.rs \
             examples/transaction.rs; do
-            grep -qx "$path" package-files.txt || {
+            grep -qx "$path" "$RUNNER_TEMP/package-files.txt" || {
               echo "::error::missing $path from the published package"
               exit 1
             }
