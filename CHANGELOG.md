@@ -1,8 +1,10 @@
 # Changelog
 
-Notable changes to `bdk_turso` are documented here.
+Notable changes to `bdk_turso` are documented here. Released versions are linked to crates.io.
 
 ## [Unreleased]
+
+## [0.3.2](https://crates.io/crates/bdk_turso/0.3.2) - 2026-11-16
 
 ### Added
 
@@ -10,16 +12,18 @@ Notable changes to `bdk_turso` are documented here.
 - Remote cache lifecycle methods: `Store::checkpoint()` reclaims cache WAL space, `Store::flush_cache()` pushes pending changes and then checkpoints, `Store::cache_stats()` returns a crate-owned `CacheStats`, and `Store::cache_path()` returns the local cache file path. These are no-ops or return `None` for local stores.
 - Remote sync configuration on `Options`: `with_bootstrap_if_empty`, `with_long_poll_timeout`, `with_client_name`, `with_auth_token_fn`, `with_partial_sync_opts_experimental`, and `with_logical_mvcc_pull`. `PartialSyncOpts` and `PartialBootstrapStrategy` are re-exported from Turso. Local stores reject these options with `Error::UnsupportedOption`.
 - `Error::RemotePull`, `Error::RemoteCheckpoint`, and `Error::RemoteStats` identify failures from the new cache methods.
+- Automated crates.io publishing on `v*` tags, including tag/version and changelog checks, package-content checks, a publish dry run, and GitHub release creation. See [RELEASING.md](RELEASING.md).
 
 ### Changed
 
 - Documented attribution for the `bdk_sqlite` fork and `bdk_redb` tests, expectations for modified forks, and the risks of changing database tables, WAL files, or sync-cache files outside the supported APIs.
+- docs.rs now builds the crate with all features, so the `wallet`, `psbt`, and `remote` APIs appear in the published documentation.
 
 ### Fixed
 
 - The blocking `WalletPersister` now returns `Error::BlockingRuntime` instead of panicking when its helper Tokio runtime cannot be built.
 
-## [0.3.1]
+## [0.3.1](https://crates.io/crates/bdk_turso/0.3.1)
 
 ### Added
 
@@ -40,7 +44,7 @@ Notable changes to `bdk_turso` are documented here.
 - PSBT persistence now fails closed with `Error::PsbtRequiresEncryption` unless the store was opened with local at-rest encryption. Stores without encryption, stores created with unknown opening options, and remote stores are rejected.
 - Local and remote Turso connections now use a five-second busy timeout. Concurrent writers wait for the write lock instead of failing immediately with a `Busy` error, matching the default behavior of `bdk_sqlite`'s SQLx connections.
 
-## [0.3.0]
+## [0.3.0](https://crates.io/crates/bdk_turso/0.3.0)
 
 ### Added
 
@@ -57,7 +61,7 @@ Notable changes to `bdk_turso` are documented here.
 
 - Marked `Error` as non-exhaustive, so downstream exhaustive matches must include a wildcard arm, and added variant-specific prefixes to its display messages.
 
-## [0.2.5]
+## [0.2.5](https://crates.io/crates/bdk_turso/0.2.5)
 
 ### Added
 
@@ -68,7 +72,7 @@ Notable changes to `bdk_turso` are documented here.
 - `Store` now represents its database as an enum to support local and remote backends.
 - `psbt` is independent of `wallet`; migrations always create the core chain and transaction tables, while wallet-specific and PSBT tables are created only when their respective features are enabled.
 
-## [0.2.4]
+## [0.2.4](https://crates.io/crates/bdk_turso/0.2.4)
 
 ### Added
 
@@ -78,14 +82,14 @@ Notable changes to `bdk_turso` are documented here.
 
 - `Store::options()` now returns `None` for stores created with `Store::from_database`, where the database's opening options are unknown. Store constructors retain their known options, including defaults.
 
-## [0.2.3]
+## [0.2.3](https://crates.io/crates/bdk_turso/0.2.3)
 
 ### Changed
 
 - Component-level store read and write methods now open and manage their own connections and transactions; callers no longer pass transactions to these methods.
 - Wallet changeset writes remain atomic, and changeset reads use a consistent transaction across components.
 
-## [0.2.2]
+## [0.2.2](https://crates.io/crates/bdk_turso/0.2.2)
 
 ### Changed
 
@@ -95,13 +99,13 @@ Notable changes to `bdk_turso` are documented here.
 
 - Selected the standard-library implementation for the `branches` dependency to avoid its incompatible nightly-only code path in documentation builds.
 
-## [0.2.1]
+## [0.2.1](https://crates.io/crates/bdk_turso/0.2.1)
 
 ### Changed
 
 - Made `Options` fields private and added builder methods to configure experimental options and encryption.
 
-## [0.2.0]
+## [0.2.0](https://crates.io/crates/bdk_turso/0.2.0)
 
 ### Added
 
@@ -109,7 +113,7 @@ Notable changes to `bdk_turso` are documented here.
 - Continuous integration checks for stable Rust and Rust 1.88.
 - Contribution guidelines and GitHub issue and pull request templates.
 
-## [0.1.0]
+## [0.1.0](https://crates.io/crates/bdk_turso/0.1.0)
 
 ### Added
 
