@@ -282,3 +282,13 @@ Licensed under either of [MIT](LICENSE-MIT) or [Apache License, Version 2.0](LIC
 ## Contribution
 
 Contributions are welcome. Please read the [contribution guide](CONTRIBUTING.md), the [BDK contributing guidelines](https://github.com/bitcoindevkit/bdk/blob/master/CONTRIBUTING.md), and the [BDK community standards](https://github.com/bitcoindevkit/bdk/community).
+
+## Disclaimer and attribution
+
+`bdk_turso` is experimental software provided under the [MIT](LICENSE-MIT) or [Apache License, Version 2.0](LICENSE-APACHE), at your option. It is provided "as is", without warranty of any kind, and you use it at your own risk. The license texts contain the full warranty disclaimer and limitation of liability; this section does not replace, modify, or expand them.
+
+**Back up your data.** Manually changing database tables, rows, WAL files, or sync-cache files outside the APIs documented here can corrupt the database or cause irreversible wallet data loss. Keep backups, test recovery, and avoid editing the database directly unless you understand the consequences.
+
+**Attribution and modified forks.** `bdk_turso` is forked from [`bdk_sqlite`](https://docs.rs/bdk_sqlite), with persistence tests adapted from [`bdk_redb`](https://docs.rs/bdk_redb). Copyright and license notices are in `LICENSE-MIT` and `LICENSE-APACHE`. If you redistribute this project or a modified version, keep those notices, identify the changes you made, and do not imply that the original authors or the BDK project endorse your fork. Mark modified builds as unofficial or use a distinct name so users do not confuse them with this project. These are project expectations, not additional license terms; nothing here restricts uses permitted by the licenses or grants trademark rights.
+
+The project does not add use restrictions beyond the licenses. This section is project documentation, not legal advice. If you redistribute or modify `bdk_turso`, review the license and any applicable attribution requirements with qualified counsel.

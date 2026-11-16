@@ -11,6 +11,10 @@ Notable changes to `bdk_turso` are documented here.
 - Remote sync configuration on `Options`: `with_bootstrap_if_empty`, `with_long_poll_timeout`, `with_client_name`, `with_auth_token_fn`, `with_partial_sync_opts_experimental`, and `with_logical_mvcc_pull`. `PartialSyncOpts` and `PartialBootstrapStrategy` are re-exported from Turso. Local stores reject these options with `Error::UnsupportedOption`.
 - `Error::RemotePull`, `Error::RemoteCheckpoint`, and `Error::RemoteStats` identify failures from the new cache methods.
 
+### Changed
+
+- Documented attribution for the `bdk_sqlite` fork and `bdk_redb` tests, expectations for modified forks, and the risks of changing database tables, WAL files, or sync-cache files outside the supported APIs.
+
 ### Fixed
 
 - The blocking `WalletPersister` now returns `Error::BlockingRuntime` instead of panicking when its helper Tokio runtime cannot be built.
