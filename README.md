@@ -184,9 +184,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Local at-rest encryption and `with_mvcc_passive_checkpoint` are rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
 
+### Remote cache options
+
+With the `remote` feature, `Options` also configures the local sync cache. These builders only apply to remote stores; passing them to `Store::new_with_options` or `Store::new_memory_with_options` returns `Error::UnsupportedOption`.
+
+| Builder | What it changes | When to use it |
+| --- | --- | --- |
+| `with_bootstrap_if_empty(bool)` | Whether an empty cache downloads the remote schema and data. Defaults to `true`, matching Turso. | Deferred bootstrap, or when the application pre-seeds the cache. |
+| `with_long_poll_timeout(Duration)` | How long the sync engine waits for remote changes before returning. | Tuning request frequency against refresh latency. |
+| `with_client_name(impl Into<String>)` | The client name reported to the sync engine. Defaults to `turso-sync-rust`. | Stable server-side telemetry and tracing. |
+| `with_auth_token_fn(...)` | An async callback that returns a fresh token before every sync request. Overrides the static token passed to the constructor. | Rotating credentials from a secret manager or OAuth flow. |
+| `with_partial_sync_opts_experimental(PartialSyncOpts)` | Experimental partial synchronization, which downloads only a segment of the remote database. | Bounding cache size for large remote databases. |
+| `with_logical_mvcc_pull(bool)` | Forces logical-MVCC (`true`) or page-stream (`false`) pulls instead of auto-detection. | Tests or unusual deployments; normal operation should leave it unset. |
+
+`PartialSyncOpts` and `PartialBootstrapStrategy` are re-exported from `bdk_turso`.
+
 ## Remote Turso
 
 Enable the `remote` feature to connect to Turso Cloud through Turso's local sync engine. The store keeps a local cache at the supplied path, pulls remote changes before reads, and pushes committed writes. An upload can fail after the local commit; the cache retains the change and the persistence operation returns `Error::RemotePush`. Call `store.push().await` to retry uploading pending changes without reapplying the changeset; a failure from this call is also reported as `Error::RemotePush`. The cache is not encrypted by Turso Cloud encryption; configure `Options::with_remote_encryption` for Turso Cloud database encryption and protect the local cache separately.
+
+The cache lifecycle is explicit. `pull()` refreshes the cache and reports whether remote changes were applied, while `push()` uploads local changes; neither does the other. `checkpoint()` folds and reclaims the cache WAL after large changesets, and `flush_cache()` performs `push()` followed by `checkpoint()` so the cache is fully uploaded and compacted. `cache_stats()` returns a crate-owned `CacheStats` with WAL sizes, last pull and push times, the last applied revision, sync network bytes, and change-data-capture operations. `cache_path()` returns the cache file path. For local stores, `pull()` returns `Ok(false)`, `checkpoint()` and `flush_cache()` are no-ops, and `cache_stats()` and `cache_path()` return `None`.
 
 ```rust,ignore
 use bdk_turso::Store;
@@ -197,6 +214,12 @@ let store = Store::new_remote(
     &auth_token,
 ).await?;
 store.migrate().await?;
+
+if store.pull().await? {
+    // Remote changes were applied to the cache.
+}
+store.flush_cache().await?;
+let stats = store.cache_stats().await?;
 ```
 
 Local at-rest encryption, MVCC passive checkpointing, and `TransactionBehavior::Concurrent` are not supported by Turso's remote sync builder and return an error if requested. The ignored sync integration test can target a disposable Turso Cloud database or a local Turso sync server. Set `BDK_TURSO_REMOTE_URL` and `BDK_TURSO_AUTH_TOKEN` to the endpoint and token accepted by that server, then run `cargo test --features remote --test persistence remote_store_syncs_changesets_between_local_caches -- --ignored`.

@@ -180,14 +180,29 @@ async fn remote_store_syncs_changesets_between_local_caches() -> anyhow::Result<
     let first_path = first_path.to_str().expect("temporary path is valid UTF-8");
     let first = Store::new_remote(first_path, &remote_url, &auth_token).await?;
     first.migrate().await?;
-    first.write_changeset(&expected).await?;
-    drop(first);
 
+    // Create the second cache after the schema exists but before any wallet data is written, so
+    // its bootstrap does not already include the changeset.
     let second_dir = tempfile::tempdir()?;
     let second_path = second_dir.path().join("second-cache.db");
     let second_path = second_path.to_str().expect("temporary path is valid UTF-8");
     let second = Store::new_remote(second_path, &remote_url, &auth_token).await?;
+
+    // A newly bootstrapped cache has no pending remote changes.
+    assert!(!second.pull().await?);
+
+    first.write_changeset(&expected).await?;
+    assert!(second.pull().await?, "pull should apply the new changeset");
+    assert!(!second.pull().await?, "a second pull should be a no-op");
     assert_eq!(second.read_changeset().await?, expected);
+
+    // Cache lifecycle methods are available for remote stores.
+    assert!(second.cache_path().is_some());
+    assert!(second.cache_stats().await?.is_some());
+    second.flush_cache().await?;
+
+    drop(first);
+    drop(second);
     Ok(())
 }
 
