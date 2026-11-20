@@ -46,7 +46,6 @@ If the file is absent, the built-in defaults are used, so `cargo bench --bench b
 | `dataset.blocks` | `32` | Local-chain entries per changeset. |
 | `dataset.scripts_per_transaction` | `8` | Cached scripts per descriptor per transaction. |
 | `dataset.locked_outpoints` | `8` | Locked outpoints per changeset. |
-| `turso.multiprocess_wal` | `true` | Open Turso with its opt-in multi-process WAL mode. |
 | `backends.turso`, `backends.sqlite`, `backends.redb` | `true` | Backends included in the run; at least one must be enabled. |
 
 All settings are optional and unknown keys are rejected. The suite fails with an actionable error when a value is zero, `writers` is empty or contains zero, or no backend is enabled.
@@ -56,7 +55,7 @@ All settings are optional and unknown keys are rejected. The suite fails with an
 - Every backend receives the same generated `bdk_wallet::ChangeSet` values. By default, each changeset contains 16 transactions, 32 local-chain entries, 128 cached scripts per descriptor, 8 locked outpoints, both descriptors, and the network.
 - Databases are file-backed in a temporary directory, so measurements include persistence and filesystem behavior. The same workload runs on each backend in the same process, one backend at a time.
 - The async backends (`bdk_turso` and `bdk_sqlite`) are driven by a Tokio multi-thread runtime whose worker pool is sized to the largest configured writer count (8 by default). `bdk_redb` is synchronous and concurrent writers use operating-system threads.
-- `bdk_turso` is opened with `Options::new().with_multiprocess_wal()`, its opt-in multi-process WAL mode, and each concurrent writer opens its own database handle on the same file. No other engine options are enabled. This is controlled by `turso.multiprocess_wal` in the configuration. `bdk_sqlite` and `bdk_redb` use their default constructors.
+- `bdk_turso` is opened with `Options::new()`; the default transaction behavior enables multi-process WAL automatically. Each concurrent writer opens its own database handle on the same file. `bdk_sqlite` and `bdk_redb` use their default constructors.
 - Changeset write and read timings reuse one changeset after a warmup phase. The database therefore reaches a steady size and later samples measure repeated updates rather than unbounded growth.
 - Concurrent writes start all writers from a barrier and give each writer a distinct changeset. Reported latency is per write; throughput is the number of writers divided by the median round time.
 - `bdk_turso` connections wait up to five seconds for a contended write lock before returning an error. `bdk_sqlite` uses its SQLx busy timeout, also five seconds by default. `bdk_redb` blocks when another write transaction is active.
@@ -107,7 +106,7 @@ Generated on 2026-11-13T15:21:24Z with 5 samples and 1 warmup sample (quick mode
 | bdk_redb | 0.2.0 |
 | bdk_sqlite | 0.6.0 |
 | bdk_turso | 0.3.0 |
-| bdk_turso options | multiprocess WAL enabled; other experimental options disabled |
+| bdk_turso options | default transaction behavior; multi-process WAL enabled automatically |
 | bdk_wallet | 3.2.0 |
 | redb (bdk_redb) | 2.6.3 |
 | sqlx (bdk_sqlite) | 0.8.6 |
@@ -148,7 +147,7 @@ Dataset: 64 distinct wallet changesets (16 transactions each).
 
 #### Workload definition
 
-- bdk_turso is opened with `Options::new().with_multiprocess_wal()`; no other engine options are enabled. Each Turso concurrent writer opens its own database handle on the same file. The other backends use their default constructors.
+- bdk_turso is opened with `Options::new()`; the default transaction behavior enables multi-process WAL automatically. Each Turso concurrent writer opens its own database handle on the same file. The other backends use their default constructors.
 - Each changeset contains 16 transactions, 32 local-chain entries, 128 cached scripts per descriptor, and 8 locked outpoints, plus both descriptors and the network.
 - Write and read measurements reuse the same changeset, so the database stops growing after the warmup phase and later samples measure steady-state updates.
 - Concurrent write rounds start all writers from a barrier and persist one distinct changeset per writer. Reported latency is per write; throughput is writers divided by the median round time.

@@ -150,17 +150,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Local encryption is not supported for remote sync stores, and Turso Cloud encryption does not encrypt the local cache; see [Remote Turso](#remote-turso).
 
-### Other Turso options
+### Transaction behavior
 
 `Options` only exposes settings the crate acts on. Turso engine capabilities that affect only application SQL, such as `ATTACH DATABASE`, `VACUUM`, generated columns, `WITHOUT ROWID`, and alternative index methods, are not exposed. Open your own Turso database or run the corresponding SQL if an application needs them.
 
 | Builder | What it changes | When to use it |
 | --- | --- | --- |
 | `with_transaction_behavior` | The `BEGIN` mode for every transaction: `Deferred`, `Immediate`, `Exclusive`, or `Concurrent` | Tuning locking and write contention; `Concurrent` allows parallel writers |
-| `with_multiprocess_wal` | Turso's WAL coordinator for sharing one file between operating-system processes | Several processes open the same database file |
-| `with_mvcc_passive_checkpoint` | Turso's passive-checkpoint behavior for MVCC databases | Long-running MVCC workloads; requires `Concurrent` |
 
-The four transaction behaviors are mutually exclusive because Turso stores one behavior per connection. Calling `with_transaction_behavior` again replaces the previous value; the last call wins. `with_multiprocess_wal` cannot be combined with `Concurrent`: Turso's MVCC mode does not support multi-process access, so the constructor returns `Error::ConflictingOptions`. `with_mvcc_passive_checkpoint` requires `Concurrent`; without it, the constructor returns `Error::ConflictingOptions`.
+The four transaction behaviors are mutually exclusive because Turso stores one behavior per connection. Calling `with_transaction_behavior` again replaces the previous value; the last call wins.
+
+Engine flags follow the selected behavior. `Concurrent` switches local databases to MVCC journal mode and enables Turso's MVCC passive-checkpoint behavior. `Deferred`, `Immediate`, and `Exclusive` enable Turso's multi-process WAL coordinator for file-backed local databases, so several operating-system processes can share the same database file.
 
 ```rust,no_run
 use bdk_turso::{Options, Store, TransactionBehavior};
@@ -175,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Local at-rest encryption and `with_mvcc_passive_checkpoint` are rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
+Local at-rest encryption is rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
 
 ### Remote cache options
 

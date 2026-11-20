@@ -26,8 +26,6 @@ pub enum Error {
     ParseNetwork(ParseNetworkError),
     /// A store-to-store transfer could not safely copy the source schema or data.
     Migration(String),
-    /// Two or more database options cannot be used together.
-    ConflictingOptions(String),
     /// The blocking persister could not build its Tokio runtime.
     #[cfg(feature = "blocking")]
     BlockingRuntime(std::io::Error),
@@ -66,9 +64,6 @@ impl fmt::Display for Error {
             #[cfg(feature = "remote")]
             Self::UnsupportedOption(message) => write!(f, "Unsupported Option Error: {message}"),
             Self::Migration(message) => write!(f, "Migration error: {message}"),
-            Self::ConflictingOptions(message) => {
-                write!(f, "Conflicting Options Error: {message}")
-            }
             #[cfg(feature = "blocking")]
             Self::BlockingRuntime(e) => write!(f, "Blocking Runtime Error: {e}"),
             #[cfg(feature = "remote")]

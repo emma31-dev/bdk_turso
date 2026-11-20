@@ -45,19 +45,17 @@ async fn enable_mvcc(database: &LocalDatabase) -> Result<(), Error> {
 /// Configuration applied when opening a [`Store`].
 ///
 /// Configure an `Options` value before opening the database; these settings cannot be changed on
-/// an already-open database. Options cover behavior the crate acts on: transaction behavior,
-/// local encryption, multi-process WAL, MVCC passive checkpointing, and remote sync settings.
+/// an already-open database. Options cover the transaction behavior, local encryption, and remote
+/// sync settings.
 ///
 /// Turso engine capabilities that only affect application SQL, such as `ATTACH DATABASE`,
 /// `VACUUM`, generated columns, `WITHOUT ROWID`, and alternative index methods, are deliberately
 /// not exposed. Open your own Turso database or run the corresponding SQL if an application needs
-/// them.
+/// them. Engine flags that follow from the transaction behavior are enabled automatically:
+/// [`TransactionBehavior::Concurrent`] turns on MVCC passive checkpointing, and the other
+/// behaviors turn on multi-process WAL for file-backed local databases.
 #[derive(Clone, Default)]
 pub struct Options {
-    /// Enables opening the database from multiple processes.
-    multiprocess_wal: bool,
-    /// Enables the MVCC passive checkpoint option.
-    mvcc_passive_checkpoint: bool,
     /// Transaction behavior applied to every connection opened by the store.
     transaction_behavior: Option<TransactionBehavior>,
     /// Enables local at-rest encryption and supplies its cipher and key.
@@ -94,31 +92,6 @@ impl Options {
         Self::default()
     }
 
-    /// Enable multi-process access to the database through Turso's WAL coordinator.
-    ///
-    /// Use this only when the same database file must be shared between operating-system
-    /// processes. It changes locking and coordination at the engine level; it does not change the
-    /// crate's schema or queries. Multiple [`Store`] clones in one process already share the same
-    /// database handle and do not need this option. It cannot be combined with
-    /// [`TransactionBehavior::Concurrent`], because Turso's MVCC mode does not support multi-process
-    /// access; that combination returns [`Error::ConflictingOptions`]. Disabled by default.
-    pub fn with_multiprocess_wal(mut self) -> Self {
-        self.multiprocess_wal = true;
-        self
-    }
-
-    /// Enable Turso's experimental passive-checkpoint behavior for MVCC databases.
-    ///
-    /// Use it for long-running MVCC workloads that need checkpointing to run alongside readers and
-    /// writers. It requires [`TransactionBehavior::Concurrent`], which switches local stores to
-    /// MVCC journal mode; setting it with any other behavior returns [`Error::ConflictingOptions`].
-    /// This option only enables the behavior and does not start a checkpoint. It is rejected by
-    /// remote sync stores, and the crate's schema and queries are unchanged.
-    pub fn with_mvcc_passive_checkpoint(mut self) -> Self {
-        self.mvcc_passive_checkpoint = true;
-        self
-    }
-
     /// Set the behavior used by every transaction opened through this store.
     ///
     /// Turso stores one [`TransactionBehavior`] per connection, and a later call replaces the
@@ -133,12 +106,12 @@ impl Options {
     ///   commit.
     ///
     /// Selecting `Concurrent` switches a local database to MVCC journal mode when the store is
-    /// opened. Turso rejects DDL inside `BEGIN CONCURRENT`, so [`Store::migrate`] and
-    /// [`Store::migrate_to`] still use a `Deferred` transaction for schema changes. `Concurrent` is
-    /// rejected by remote sync stores and cannot be combined with
-    /// [`Options::with_multiprocess_wal`] (MVCC does not support multi-process access); those
-    /// combinations return `Error::UnsupportedOption` or [`Error::ConflictingOptions`]
-    /// respectively. The crate's read and write queries otherwise run under the selected behavior.
+    /// opened and enables Turso's MVCC passive-checkpoint behavior. Turso rejects DDL inside
+    /// `BEGIN CONCURRENT`, so [`Store::migrate`] and [`Store::migrate_to`] still use a
+    /// `Deferred` transaction for schema changes. `Concurrent` is rejected by remote sync stores.
+    /// The other behaviors enable Turso's multi-process WAL coordinator for file-backed local
+    /// databases, so several operating-system processes can share the same database file. The
+    /// crate's read and write queries otherwise run under the selected behavior.
     pub fn with_transaction_behavior(mut self, behavior: TransactionBehavior) -> Self {
         self.transaction_behavior = Some(behavior);
         self
@@ -294,8 +267,6 @@ pub fn generate_encryption_opts() -> EncryptionOpts {
 impl fmt::Debug for Options {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Options")
-            .field("multiprocess_wal", &self.multiprocess_wal)
-            .field("mvcc_passive_checkpoint", &self.mvcc_passive_checkpoint)
             .field(
                 "transaction_behavior",
                 &match self.transaction_behavior {
@@ -456,27 +427,12 @@ impl Store {
     /// # }
     /// ```
     pub async fn new_with_options(path: &str, options: Options) -> Result<Self, Error> {
-        if options.multiprocess_wal
-            && matches!(
-                options.transaction_behavior,
-                Some(TransactionBehavior::Concurrent)
-            )
-        {
-            return Err(Error::ConflictingOptions(
-                "`with_multiprocess_wal` cannot be combined with `TransactionBehavior::Concurrent`: Turso's MVCC mode does not support multi-process access".into(),
-            ));
-        }
-
-        if options.mvcc_passive_checkpoint
-            && !matches!(
-                options.transaction_behavior,
-                Some(TransactionBehavior::Concurrent)
-            )
-        {
-            return Err(Error::ConflictingOptions(
-                "`with_mvcc_passive_checkpoint` requires `TransactionBehavior::Concurrent`: Turso applies it only to MVCC databases".into(),
-            ));
-        }
+        let concurrent = matches!(
+            options.transaction_behavior,
+            Some(TransactionBehavior::Concurrent)
+        );
+        // Turso rejects multi-process WAL for in-memory databases and for MVCC.
+        let multiprocess_wal = !concurrent && path != ":memory:";
 
         #[cfg(feature = "remote")]
         if options.remote_encryption.is_some() {
@@ -494,8 +450,8 @@ impl Store {
         }
 
         let mut builder = Builder::new_local(path)
-            .experimental_multiprocess_wal(options.multiprocess_wal)
-            .experimental_mvcc_passive_checkpoint(options.mvcc_passive_checkpoint);
+            .experimental_multiprocess_wal(multiprocess_wal)
+            .experimental_mvcc_passive_checkpoint(concurrent);
 
         if let Some(encryption) = &options.encryption {
             builder = builder
@@ -504,10 +460,7 @@ impl Store {
         }
 
         let database = builder.build().await?;
-        if matches!(
-            options.transaction_behavior,
-            Some(TransactionBehavior::Concurrent)
-        ) {
+        if concurrent {
             enable_mvcc(&database).await?;
         }
         Ok(Self {
@@ -553,9 +506,9 @@ impl Store {
 
     /// Connect to Turso Cloud using a local cache and the supplied database options.
     ///
-    /// Local at-rest encryption and MVCC passive checkpointing are unsupported in sync mode and
-    /// return an error. Use [`Options::with_remote_encryption`] for Turso Cloud encryption; this
-    /// does not encrypt the local cache. Multi-process WAL is forwarded to Turso's sync builder.
+    /// Local at-rest encryption is unsupported in sync mode and returns an error. Use
+    /// [`Options::with_remote_encryption`] for Turso Cloud encryption; this does not encrypt the
+    /// local cache. Multi-process WAL is enabled for the local sync cache.
     #[cfg(feature = "remote")]
     pub async fn new_remote_with_options(
         local_path: &str,
@@ -566,11 +519,6 @@ impl Store {
         if options.encryption.is_some() {
             return Err(Error::UnsupportedOption(
                 "local at-rest encryption is unsupported in remote sync mode; use `with_remote_encryption` for Turso Cloud encryption (the local cache remains unencrypted)".into(),
-            ));
-        }
-        if options.mvcc_passive_checkpoint {
-            return Err(Error::UnsupportedOption(
-                "MVCC passive checkpointing is not supported by Turso's remote sync builder".into(),
             ));
         }
         if matches!(
@@ -585,7 +533,7 @@ impl Store {
         let mut builder = turso::sync::Builder::new_remote(local_path)
             .with_remote_url(remote_url)
             .with_auth_token(auth_token)
-            .experimental_multiprocess_wal(options.multiprocess_wal);
+            .experimental_multiprocess_wal(true);
 
         if let Some(bootstrap_if_empty) = options.bootstrap_if_empty {
             builder = builder.bootstrap_if_empty(bootstrap_if_empty);
@@ -1404,8 +1352,6 @@ mod test {
     fn options_default_to_disabled() {
         let options = Options::new();
 
-        assert!(!options.multiprocess_wal);
-        assert!(!options.mvcc_passive_checkpoint);
         assert!(options.transaction_behavior.is_none());
         assert!(options.encryption.is_none());
         #[cfg(feature = "remote")]
@@ -1448,18 +1394,6 @@ mod test {
         .unwrap_err();
         assert!(
             matches!(error, Error::UnsupportedOption(message) if message.contains("local at-rest encryption"))
-        );
-
-        let error = Store::new_remote_with_options(
-            ":memory:",
-            "libsql://unused.turso.io",
-            "unused-token",
-            Options::new().with_mvcc_passive_checkpoint(),
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(error, Error::UnsupportedOption(message) if message.contains("MVCC passive checkpointing"))
         );
 
         let error = Store::new_remote_with_options(
@@ -1654,34 +1588,6 @@ mod test {
             options.transaction_behavior,
             Some(TransactionBehavior::Exclusive)
         ));
-    }
-
-    #[tokio::test]
-    async fn multiprocess_wal_conflicts_with_concurrent() -> anyhow::Result<()> {
-        let error = Store::new_memory_with_options(
-            Options::new()
-                .with_multiprocess_wal()
-                .with_transaction_behavior(TransactionBehavior::Concurrent),
-        )
-        .await
-        .unwrap_err();
-
-        assert!(
-            matches!(error, Error::ConflictingOptions(message) if message.contains("multiprocess"))
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn mvcc_passive_checkpoint_requires_concurrent() -> anyhow::Result<()> {
-        let error = Store::new_memory_with_options(Options::new().with_mvcc_passive_checkpoint())
-            .await
-            .unwrap_err();
-
-        assert!(
-            matches!(error, Error::ConflictingOptions(message) if message.contains("mvcc_passive_checkpoint"))
-        );
-        Ok(())
     }
 
     #[tokio::test]
