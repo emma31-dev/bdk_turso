@@ -4,6 +4,13 @@ Notable changes to `bdk_turso` are documented here. Released versions are linked
 
 ## [Unreleased]
 
+## [0.4.0](https://crates.io/crates/bdk_turso/0.4.0) - 2026-11-20
+
+### Changed
+
+- **Breaking:** `Options` no longer exposes Turso engine flags that only affect application SQL: `with_index_method`, `with_vacuum`, `with_attach`, `with_generated_columns`, and `with_without_rowid`. The crate's schema and queries never used them. Open your own Turso database or run the corresponding SQL if an application needs those capabilities.
+- `Options::with_mvcc_passive_checkpoint` now requires `TransactionBehavior::Concurrent` and returns `Error::ConflictingOptions` otherwise, so the option cannot be a silent no-op when MVCC is off.
+
 ## [0.3.2](https://crates.io/crates/bdk_turso/0.3.2) - 2026-11-16
 
 ### Added

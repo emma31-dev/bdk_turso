@@ -56,7 +56,7 @@ All settings are optional and unknown keys are rejected. The suite fails with an
 - Every backend receives the same generated `bdk_wallet::ChangeSet` values. By default, each changeset contains 16 transactions, 32 local-chain entries, 128 cached scripts per descriptor, 8 locked outpoints, both descriptors, and the network.
 - Databases are file-backed in a temporary directory, so measurements include persistence and filesystem behavior. The same workload runs on each backend in the same process, one backend at a time.
 - The async backends (`bdk_turso` and `bdk_sqlite`) are driven by a Tokio multi-thread runtime whose worker pool is sized to the largest configured writer count (8 by default). `bdk_redb` is synchronous and concurrent writers use operating-system threads.
-- `bdk_turso` is opened with `Options::new().with_multiprocess_wal()`, its opt-in multi-process WAL mode, and each concurrent writer opens its own database handle on the same file. All other experimental Turso options are disabled. This is controlled by `turso.multiprocess_wal` in the configuration. `bdk_sqlite` and `bdk_redb` use their default constructors.
+- `bdk_turso` is opened with `Options::new().with_multiprocess_wal()`, its opt-in multi-process WAL mode, and each concurrent writer opens its own database handle on the same file. No other engine options are enabled. This is controlled by `turso.multiprocess_wal` in the configuration. `bdk_sqlite` and `bdk_redb` use their default constructors.
 - Changeset write and read timings reuse one changeset after a warmup phase. The database therefore reaches a steady size and later samples measure repeated updates rather than unbounded growth.
 - Concurrent writes start all writers from a barrier and give each writer a distinct changeset. Reported latency is per write; throughput is the number of writers divided by the median round time.
 - `bdk_turso` connections wait up to five seconds for a contended write lock before returning an error. `bdk_sqlite` uses its SQLx busy timeout, also five seconds by default. `bdk_redb` blocks when another write transaction is active.
@@ -148,7 +148,7 @@ Dataset: 64 distinct wallet changesets (16 transactions each).
 
 #### Workload definition
 
-- bdk_turso is opened with `Options::new().with_multiprocess_wal()`; all other experimental options are disabled. Each Turso concurrent writer opens its own database handle on the same file. The other backends use their default constructors.
+- bdk_turso is opened with `Options::new().with_multiprocess_wal()`; no other engine options are enabled. Each Turso concurrent writer opens its own database handle on the same file. The other backends use their default constructors.
 - Each changeset contains 16 transactions, 32 local-chain entries, 128 cached scripts per descriptor, and 8 locked outpoints, plus both descriptors and the network.
 - Write and read measurements reuse the same changeset, so the database stops growing after the warmup phase and later samples measure steady-state updates.
 - Concurrent write rounds start all writers from a barrier and persist one distinct changeset per writer. Reported latency is per write; throughput is writers divided by the median round time.
