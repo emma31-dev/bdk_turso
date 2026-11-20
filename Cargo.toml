@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/emma31-dev/bdk_turso"
 documentation = "https://docs.rs/bdk_turso"
-exclude = [".DS_Store", "ISSUES.md", "proposal.md", "proposal-v2.md"]
+exclude = ["PROPOSAL.md"]
 
 [package.metadata.docs.rs]
 all-features = true
