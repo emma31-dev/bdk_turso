@@ -5,3 +5,4 @@ polar.db
 polar.db-wal
 examples/config.toml
 benches/config.toml
+Cargo.lock
