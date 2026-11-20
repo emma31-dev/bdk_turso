@@ -64,20 +64,13 @@ fn wallet_persister_persists_single_keychain() {
 }
 
 #[tokio::test]
-async fn store_opens_with_experimental_options() -> anyhow::Result<()> {
+async fn store_opens_with_multiprocess_wal() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("options.db");
     let path = path.to_str().expect("temporary path is valid UTF-8");
-    let options = Options::new()
-        .with_index_method()
-        .with_multiprocess_wal()
-        .with_vacuum()
-        .with_attach()
-        .with_generated_columns()
-        .with_without_rowid()
-        .with_mvcc_passive_checkpoint();
 
-    let store = Store::new_with_options(path, options).await?;
+    // Non-concurrent transaction behavior enables multi-process WAL automatically.
+    let store = Store::new_with_options(path, Options::new()).await?;
     store.migrate().await?;
 
     let expected = full_changeset(31);
@@ -91,14 +84,7 @@ async fn store_opens_with_concurrent_transactions() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("concurrent.db");
     let path = path.to_str().expect("temporary path is valid UTF-8");
-    let options = Options::new()
-        .with_index_method()
-        .with_vacuum()
-        .with_attach()
-        .with_generated_columns()
-        .with_without_rowid()
-        .with_mvcc_passive_checkpoint()
-        .with_transaction_behavior(TransactionBehavior::Concurrent);
+    let options = Options::new().with_transaction_behavior(TransactionBehavior::Concurrent);
 
     let store = Store::new_with_options(path, options).await?;
     store.migrate().await?;

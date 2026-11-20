@@ -4,6 +4,13 @@ Notable changes to `bdk_turso` are documented here. Released versions are linked
 
 ## [Unreleased]
 
+## [0.4.0](https://crates.io/crates/bdk_turso/0.4.0) - 2026-11-20
+
+### Changed
+
+- **Breaking:** `Options` now exposes only the transaction behavior, local encryption, and remote sync settings. Removed the pass-through engine builders `with_index_method`, `with_vacuum`, `with_attach`, `with_generated_columns`, and `with_without_rowid`, which only affected application SQL, and the engine-tuning builders `with_multiprocess_wal` and `with_mvcc_passive_checkpoint`. The crate now enables the matching Turso engine flags from the transaction behavior: `Concurrent` enables MVCC passive checkpointing, and the other behaviors enable multi-process WAL.
+- **Breaking:** Removed the `Error::ConflictingOptions` variant, which only reported combinations of the removed builders.
+
 ## [0.3.2](https://crates.io/crates/bdk_turso/0.3.2) - 2026-11-16
 
 ### Added

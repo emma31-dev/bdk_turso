@@ -125,7 +125,7 @@ Each blocking call runs on a dedicated thread with its own Tokio runtime, so it 
 
 ## Options and encryption
 
-`Options::new()` leaves all experimental Turso settings disabled. Build the options before opening the store and pass them to `Store::new_with_options`, `Store::new_memory_with_options`, or `Store::new_remote_with_options`; the settings apply while Turso opens the database and cannot be changed on an open store.
+`Options::new()` leaves every optional setting disabled. Build the options before opening the store and pass them to `Store::new_with_options`, `Store::new_memory_with_options`, or `Store::new_remote_with_options`; the settings apply while Turso opens the database and cannot be changed on an open store.
 
 ### Encryption
 
@@ -150,22 +150,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Local encryption is not supported for remote sync stores, and Turso Cloud encryption does not encrypt the local cache; see [Remote Turso](#remote-turso).
 
-### Other Turso options
+### Transaction behavior
 
-The remaining builders are pass-through engine settings. Except for `with_transaction_behavior`, they do not change the crate's schema or persistence queries; they only affect SQL that the application runs on the same database. The default schema already creates B-tree indexes for its lookup columns, so `with_index_method` is only needed for alternative index methods.
+`Options` only exposes settings the crate acts on. Turso engine capabilities that affect only application SQL, such as `ATTACH DATABASE`, `VACUUM`, generated columns, `WITHOUT ROWID`, and alternative index methods, are not exposed. Open your own Turso database or run the corresponding SQL if an application needs them.
 
-| Builder | What it enables | When to use it | Effect on `bdk_turso` queries |
-| --- | --- | --- | --- |
-| `with_index_method` | Turso's experimental index methods, for example `CREATE INDEX ... USING toy_vector_sparse_ivf (...)` | Application SQL that needs a non-B-tree index method | None. Ordinary B-tree indexes are always available and the schema creates them; the flag is not needed for the crate's lookups. Turso's `fts` method is not compiled into the crate's default dependency build. |
-| `with_multiprocess_wal` | Turso's WAL coordinator for sharing one file between operating-system processes | Several processes open the same database file | None. It adds cross-process locking and coordination; `Store` clones in one process already share a database handle. |
-| `with_vacuum` | The `VACUUM` statement | Reclaiming space after large deletes or migrations | None. The crate never runs `VACUUM`; call it from application SQL. |
-| `with_attach` | `ATTACH DATABASE` and `DETACH DATABASE` | Application SQL that joins another SQLite-compatible file | None. `migrate_to` copies tables without `ATTACH`. |
-| `with_generated_columns` | Generated columns in application schemas | Application tables with computed columns | None. The crate schema has no generated columns and its `INSERT`/`SELECT` statements name columns explicitly. |
-| `with_without_rowid` | `WITHOUT ROWID` table definitions | Application tables with composite primary keys that do not need a rowid | None. The crate schema does not use `WITHOUT ROWID`; `block` and `keychain` rely on integer rowid aliases. |
-| `with_mvcc_passive_checkpoint` | Turso's experimental passive-checkpoint behavior for MVCC databases | Long-running MVCC workloads that need background checkpointing | None. It does not start a checkpoint. Select `Concurrent` through `with_transaction_behavior` (or enable MVCC externally) first. |
-| `with_transaction_behavior` | The `BEGIN` mode for every transaction: `Deferred`, `Immediate`, `Exclusive`, or `Concurrent` | Tuning locking and write contention; `Concurrent` allows parallel writers | Applies to all crate transactions. `Concurrent` switches local databases to MVCC and is rejected for remote sync; migration still uses `Deferred` because Turso rejects DDL under `BEGIN CONCURRENT`. |
+| Builder | What it changes | When to use it |
+| --- | --- | --- |
+| `with_transaction_behavior` | The `BEGIN` mode for every transaction: `Deferred`, `Immediate`, `Exclusive`, or `Concurrent` | Tuning locking and write contention; `Concurrent` allows parallel writers |
 
-The four transaction behaviors are mutually exclusive because Turso stores one behavior per connection. Calling `with_transaction_behavior` again replaces the previous value; the last call wins. `with_multiprocess_wal` cannot be combined with `Concurrent`: Turso's MVCC mode does not support multi-process access, so the constructor returns `Error::ConflictingOptions`.
+The four transaction behaviors are mutually exclusive because Turso stores one behavior per connection. Calling `with_transaction_behavior` again replaces the previous value; the last call wins.
+
+Engine flags follow the selected behavior. `Concurrent` switches local databases to MVCC journal mode and enables Turso's MVCC passive-checkpoint behavior. `Deferred`, `Immediate`, and `Exclusive` enable Turso's multi-process WAL coordinator for file-backed local databases, so several operating-system processes can share the same database file.
 
 ```rust,no_run
 use bdk_turso::{Options, Store, TransactionBehavior};
@@ -173,8 +168,6 @@ use bdk_turso::{Options, Store, TransactionBehavior};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::new()
-        .with_attach()
-        .with_generated_columns()
         .with_transaction_behavior(TransactionBehavior::Immediate);
     let store = Store::new_with_options("wallet.sqlite", options).await?;
     store.migrate().await?;
@@ -182,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Local at-rest encryption and `with_mvcc_passive_checkpoint` are rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
+Local at-rest encryption is rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
 
 ### Remote cache options
 
