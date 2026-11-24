@@ -28,8 +28,9 @@ type TableColumn = (String, String, i64, Value, i64);
 /// How long a connection waits for a contended database lock before returning an error.
 ///
 /// Turso leaves its busy handler unset by default, so a concurrent writer otherwise fails
-/// immediately with `Busy`. This matches the 5-second default used by `sqlx`'s SQLite driver.
-const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+/// immediately with `Busy`. This matches the 5-second default used by `sqlx`'s SQLite driver and
+/// can be overridden with [`Options::with_busy_timeout`].
+const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Switch a local database to MVCC journal mode.
 ///
@@ -45,8 +46,8 @@ async fn enable_mvcc(database: &LocalDatabase) -> Result<(), Error> {
 /// Configuration applied when opening a [`Store`].
 ///
 /// Configure an `Options` value before opening the database; these settings cannot be changed on
-/// an already-open database. Options cover the transaction behavior, local encryption, and remote
-/// sync settings.
+/// an already-open database. Options cover the busy timeout, transaction behavior, local
+/// encryption, and remote sync settings.
 ///
 /// Turso engine capabilities that only affect application SQL, such as `ATTACH DATABASE`,
 /// `VACUUM`, generated columns, `WITHOUT ROWID`, and alternative index methods, are deliberately
@@ -56,6 +57,8 @@ async fn enable_mvcc(database: &LocalDatabase) -> Result<(), Error> {
 /// behaviors turn on multi-process WAL for file-backed local databases.
 #[derive(Clone, Default)]
 pub struct Options {
+    /// How long a connection waits for a contended database lock before returning an error.
+    busy_timeout: Option<Duration>,
     /// Transaction behavior applied to every connection opened by the store.
     transaction_behavior: Option<TransactionBehavior>,
     /// Enables local at-rest encryption and supplies its cipher and key.
@@ -90,6 +93,20 @@ impl Options {
     /// methods before passing the options to a store constructor.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set how long a connection waits for a contended database lock before returning `Busy`.
+    ///
+    /// The default is 5 seconds, matching the default used by `sqlx`'s SQLite driver. A longer
+    /// timeout lets a writer wait out a short-lived lock instead of failing immediately; a shorter
+    /// timeout returns control to the caller sooner. Pass [`Duration::ZERO`] to fail as soon as the
+    /// lock is contended rather than waiting.
+    ///
+    /// The timeout applies to every connection the store opens, including the local cache of a
+    /// remote sync store.
+    pub fn with_busy_timeout(mut self, timeout: Duration) -> Self {
+        self.busy_timeout = Some(timeout);
+        self
     }
 
     /// Set the behavior used by every transaction opened through this store.
@@ -267,6 +284,10 @@ pub fn generate_encryption_opts() -> EncryptionOpts {
 impl fmt::Debug for Options {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Options")
+            .field(
+                "busy_timeout",
+                &self.busy_timeout.unwrap_or(DEFAULT_BUSY_TIMEOUT),
+            )
             .field(
                 "transaction_behavior",
                 &match self.transaction_behavior {
@@ -599,14 +620,22 @@ impl Store {
             .unwrap_or(TransactionBehavior::Deferred)
     }
 
+    fn configured_busy_timeout(&self) -> Duration {
+        self.options
+            .as_ref()
+            .and_then(|options| options.busy_timeout)
+            .unwrap_or(DEFAULT_BUSY_TIMEOUT)
+    }
+
     async fn connect_with_behavior(
         &self,
         transaction_behavior: TransactionBehavior,
     ) -> Result<Connection, Error> {
+        let busy_timeout = self.configured_busy_timeout();
         match &self.database {
             StoreDatabase::Local(database) => {
                 let mut connection = database.connect()?;
-                connection.busy_timeout(BUSY_TIMEOUT)?;
+                connection.busy_timeout(busy_timeout)?;
                 connection.set_transaction_behavior(transaction_behavior);
                 Ok(connection)
             }
@@ -614,7 +643,7 @@ impl Store {
             StoreDatabase::Remote(database) => {
                 database.pull().await?;
                 let mut connection = database.connect().await?;
-                connection.busy_timeout(BUSY_TIMEOUT)?;
+                connection.busy_timeout(busy_timeout)?;
                 connection.set_transaction_behavior(transaction_behavior);
                 Ok(connection)
             }
@@ -1352,6 +1381,7 @@ mod test {
     fn options_default_to_disabled() {
         let options = Options::new();
 
+        assert!(options.busy_timeout.is_none());
         assert!(options.transaction_behavior.is_none());
         assert!(options.encryption.is_none());
         #[cfg(feature = "remote")]
@@ -1364,6 +1394,31 @@ mod test {
             assert!(options.partial_sync_opts.is_none());
             assert!(options.logical_mvcc_pull.is_none());
         }
+    }
+
+    #[test]
+    fn busy_timeout_records_the_configured_value() {
+        let default = Options::new();
+        assert_eq!(default.busy_timeout, None);
+
+        let configured = Options::new().with_busy_timeout(Duration::from_millis(250));
+        assert_eq!(configured.busy_timeout, Some(Duration::from_millis(250)));
+    }
+
+    #[tokio::test]
+    async fn store_defaults_to_a_five_second_busy_timeout() -> anyhow::Result<()> {
+        assert_eq!(DEFAULT_BUSY_TIMEOUT, Duration::from_secs(5));
+
+        let store = Store::new_memory().await?;
+        assert_eq!(store.configured_busy_timeout(), Duration::from_secs(5));
+
+        let store = Store::new_with_options(
+            ":memory:",
+            Options::new().with_busy_timeout(Duration::from_millis(250)),
+        )
+        .await?;
+        assert_eq!(store.configured_busy_timeout(), Duration::from_millis(250));
+        Ok(())
     }
 
     #[test]

@@ -4,6 +4,10 @@ Notable changes to `bdk_turso` are documented here. Released versions are linked
 
 ## [Unreleased]
 
+### Added
+
+- `Options::with_busy_timeout` sets how long a connection waits for a contended database lock before returning `Busy`. The default remains five seconds, and `Duration::ZERO` fails immediately on contention.
+
 ## [0.4.0](https://crates.io/crates/bdk_turso/0.4.0) - 2026-11-20
 
 ### Changed

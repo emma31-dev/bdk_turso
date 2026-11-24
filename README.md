@@ -180,6 +180,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Local at-rest encryption is rejected by remote sync stores with an error, as is `TransactionBehavior::Concurrent`. `with_remote_encryption` is the only encryption option available to them; see [Remote Turso](#remote-turso).
 
+### Busy timeout
+
+`Options::with_busy_timeout` controls how long a connection waits for a contended database lock before returning `Busy`. The default is **5 seconds**, matching the default used by `sqlx`'s SQLite driver. With the default, a writer waits out a short-lived lock instead of failing immediately; pass `Duration::ZERO` to fail as soon as the lock is contended.
+
+The timeout applies to every connection the store opens, including the local cache of a remote sync store.
+
+```rust,no_run
+use std::time::Duration;
+use bdk_turso::{Options, Store};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = Options::new().with_busy_timeout(Duration::from_secs(10));
+    let store = Store::new_with_options("wallet.sqlite", options).await?;
+    store.migrate().await?;
+    Ok(())
+}
+```
+
 ### Remote cache options
 
 With the `remote` feature, `Options` also configures the local sync cache. These builders only apply to remote stores; passing them to `Store::new_with_options` or `Store::new_memory_with_options` returns `Error::UnsupportedOption`.
