@@ -42,26 +42,29 @@ gh secret set CARGO_REGISTRY_TOKEN
    cargo test --all-targets --all-features --locked
    cargo check --no-default-features --locked
    RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
+   cargo deny check
+   cargo tree -d
    cargo package --list --locked
    cargo publish --dry-run --locked
    ```
 
-   Confirm that `cargo package --list` includes `README.md`, `migrations/*.sql`, and the examples. The crate reads migrations with `include_str!`, so a missing file breaks downstream builds.
-5. **Commit and push** the version bump, changelog, and any release notes. Wait for CI to pass on `main`.
-6. **Tag the release** from the commit that passed CI:
+   Confirm that `cargo package --list` includes `README.md`, `migrations/*.sql`, and the examples. The crate reads migrations with `include_str!`, so a missing file breaks downstream builds. `cargo deny check` must pass with no unexpired exceptions beyond the ones reviewed for this release, and `cargo tree -d` must not show a new duplicate version that needs review. Install the gate with `cargo install cargo-deny --locked` if it is not already available.
+5. **Review the dependency security posture.** Confirm that `time` (and every other crate in the shipped graph) resolves to a patched version, that each `deny.toml` exception is still justified and unexpired, and that `SECURITY.md` still describes the current response process. Record any new residual risk in the release notes.
+6. **Commit and push** the version bump, changelog, and any release notes. Wait for CI to pass on `main`.
+7. **Tag the release** from the commit that passed CI:
 
    ```sh
-   git tag -a v0.3.2 -m "bdk_turso 0.3.2"
-   git push origin v0.3.2
+   git tag -a v0.4.0 -m "bdk_turso 0.4.0"
+   git push origin v0.4.0
    ```
 
-7. **Approve the workflow** if the `crates-io` environment requires reviewers. The `Publish` workflow then:
+8. **Approve the workflow** if the `crates-io` environment requires reviewers. The `Publish` workflow then:
    - checks that the tag matches `Cargo.toml`;
    - checks that `CHANGELOG.md` has a section for the version;
-   - runs the tests, docs, package checks, and a publish dry run;
+   - runs the advisory and license gate, tests, docs, package checks, and a publish dry run;
    - publishes to crates.io;
    - creates a GitHub release from the changelog section.
-8. **Verify the release:**
+9. **Verify the release:**
    - crates.io: <https://crates.io/crates/bdk_turso>
    - docs.rs: <https://docs.rs/bdk_turso/x.y.z>
    - GitHub releases: <https://github.com/emma31-dev/bdk_turso/releases>
@@ -74,11 +77,11 @@ gh secret set CARGO_REGISTRY_TOKEN
 - **After crates.io accepts the upload:** never reuse the version. Publish a new patch release with the fix. If the published version is unusable, yank it:
 
   ```sh
-  cargo yank --version 0.3.2
+  cargo yank --version 0.4.0
   ```
 
   Yanking prevents new dependency resolution from selecting the version but does not delete it.
-- **If the GitHub release fails after publishing:** create it manually with `gh release create v0.3.2 --title "bdk_turso 0.3.2" --notes-file release-notes.md`, using the changelog section for the notes.
+- **If the GitHub release fails after publishing:** create it manually with `gh release create v0.4.0 --title "bdk_turso 0.4.0" --notes-file release-notes.md`, using the changelog section for the notes.
 - **If docs.rs fails:** fix the docs build in a new patch release, or trigger a rebuild from the docs.rs build page after correcting the source.
 
 ## Release cadence
