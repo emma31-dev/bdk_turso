@@ -154,8 +154,6 @@ struct Config {
     storage_changesets: u64,
     /// Shape of each generated wallet changeset.
     dataset: DatasetConfig,
-    /// Turso-specific benchmark options.
-    turso: TursoConfig,
     /// Backends included in the run.
     backends: BackendSelection,
 }
@@ -173,7 +171,6 @@ impl Default for Config {
             writers: vec![1, 2, 4, 8],
             storage_changesets: 64,
             dataset: DatasetConfig::default(),
-            turso: TursoConfig::default(),
             backends: BackendSelection::default(),
         }
     }
@@ -297,22 +294,6 @@ impl DatasetConfig {
     }
 }
 
-/// Turso-specific benchmark options.
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct TursoConfig {
-    /// Open Turso with its opt-in multi-process WAL mode.
-    multiprocess_wal: bool,
-}
-
-impl Default for TursoConfig {
-    fn default() -> Self {
-        Self {
-            multiprocess_wal: true,
-        }
-    }
-}
-
 /// Backends included in the run.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -381,15 +362,10 @@ impl Dataset {
 
 /// Turso options used by the benchmark.
 ///
-/// Multi-process WAL is opt-in in `bdk_turso`; enabling it lets multiple connections take part in
-/// the concurrent-write workload. All other experimental options stay disabled.
-fn turso_options(config: &Config) -> bdk_turso::Options {
-    let options = bdk_turso::Options::new();
-    if config.turso.multiprocess_wal {
-        options.with_multiprocess_wal()
-    } else {
-        options
-    }
+/// The default transaction behavior enables multi-process WAL automatically, so concurrent writers
+/// can open their own database handles on the same file.
+fn turso_options() -> bdk_turso::Options {
+    bdk_turso::Options::new()
 }
 
 fn benchmark_turso(
@@ -408,7 +384,7 @@ fn benchmark_turso(
     let size_path = path_str(&size_path);
 
     let store = runtime.block_on(async {
-        let store = TursoStore::new_with_options(work_path, turso_options(config)).await?;
+        let store = TursoStore::new_with_options(work_path, turso_options()).await?;
         store.migrate().await?;
         store.write_changeset(&dataset.changeset).await?;
         anyhow::Ok(store)
@@ -445,7 +421,7 @@ fn benchmark_turso(
         let stores = runtime.block_on(async {
             let mut stores = Vec::with_capacity(writers);
             for _ in 0..writers {
-                stores.push(TursoStore::new_with_options(work_path, turso_options(config)).await?);
+                stores.push(TursoStore::new_with_options(work_path, turso_options()).await?);
             }
             anyhow::Ok(stores)
         })?;
@@ -462,7 +438,7 @@ fn benchmark_turso(
     }
 
     runtime.block_on(async {
-        let store = TursoStore::new_with_options(open_path, turso_options(config)).await?;
+        let store = TursoStore::new_with_options(open_path, turso_options()).await?;
         store.migrate().await?;
         store.write_changeset(&dataset.changeset).await?;
         anyhow::Ok(())
@@ -470,7 +446,7 @@ fn benchmark_turso(
     let open = measure(config, config.open_batch, |operations| {
         for _ in 0..operations {
             runtime.block_on(async {
-                let store = TursoStore::new_with_options(open_path, turso_options(config))
+                let store = TursoStore::new_with_options(open_path, turso_options())
                     .await
                     .unwrap();
                 drop(store);
@@ -484,7 +460,7 @@ fn benchmark_turso(
     ));
 
     runtime.block_on(async {
-        let store = TursoStore::new_with_options(size_path, turso_options(config)).await?;
+        let store = TursoStore::new_with_options(size_path, turso_options()).await?;
         store.migrate().await?;
         for changeset in &dataset.history {
             store.write_changeset(changeset).await?;
@@ -1033,10 +1009,9 @@ fn render_report(
 
     report.push_str("\n## Workload definition\n\n");
     report.push_str(&format!(
-        "- bdk_turso is opened with `Options::new().with_multiprocess_wal()` when \
-         `turso.multiprocess_wal` is enabled; all other experimental options are disabled. Each \
-         Turso concurrent writer opens its own database handle on the same file. The other \
-         backends use their default constructors.\n\
+        "- bdk_turso is opened with `Options::new()`; the default transaction behavior enables \
+         multi-process WAL automatically. Each Turso concurrent writer opens its own database \
+         handle on the same file. The other backends use their default constructors.\n\
          - Each changeset contains {} transactions, {} local-chain entries, {} cached scripts per \
          descriptor, and {} locked outpoint(s), plus both descriptors and the network.\n\
          - Write and read measurements reuse the same changeset, so the database stops growing \
@@ -1084,10 +1059,6 @@ fn render_configuration(config: &Config) -> String {
             "dataset.locked_outpoints",
             config.dataset.locked_outpoints.to_string(),
         ),
-        (
-            "turso.multiprocess_wal",
-            config.turso.multiprocess_wal.to_string(),
-        ),
     ];
 
     let mut report = String::from("\n## Configuration\n\n| Setting | Value |\n| --- | --- |\n");
@@ -1098,11 +1069,7 @@ fn render_configuration(config: &Config) -> String {
 }
 
 fn render_environment(config: &Config) -> String {
-    let turso_options = if config.turso.multiprocess_wal {
-        "multiprocess WAL enabled; other experimental options disabled"
-    } else {
-        "multiprocess WAL disabled; other experimental options disabled"
-    };
+    let turso_options = "default transaction behavior; multi-process WAL enabled automatically";
     let mut rows: Vec<(&str, String)> = vec![
         ("bdk_turso", package_version("bdk_turso")),
         ("bdk_turso options", turso_options.to_owned()),

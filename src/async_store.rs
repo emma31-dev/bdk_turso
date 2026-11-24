@@ -28,8 +28,9 @@ type TableColumn = (String, String, i64, Value, i64);
 /// How long a connection waits for a contended database lock before returning an error.
 ///
 /// Turso leaves its busy handler unset by default, so a concurrent writer otherwise fails
-/// immediately with `Busy`. This matches the 5-second default used by `sqlx`'s SQLite driver.
-const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+/// immediately with `Busy`. This matches the 5-second default used by `sqlx`'s SQLite driver and
+/// can be overridden with [`Options::with_busy_timeout`].
+const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Switch a local database to MVCC journal mode.
 ///
@@ -42,33 +43,22 @@ async fn enable_mvcc(database: &LocalDatabase) -> Result<(), Error> {
     Ok(())
 }
 
-/// Opt-in Turso features applied when opening a [`Store`].
+/// Configuration applied when opening a [`Store`].
 ///
-/// All experimental features are disabled by default. Configure an `Options` value before opening
-/// the database; these settings cannot be changed on an already-open database.
+/// Configure an `Options` value before opening the database; these settings cannot be changed on
+/// an already-open database. Options cover the busy timeout, transaction behavior, local
+/// encryption, and remote sync settings.
 ///
-/// These builders are pass-through engine settings: they change what SQL an application may run or
-/// how Turso executes it, but they do not change the crate's schema or persistence queries. The
-/// exceptions are [`Options::with_transaction_behavior`], which applies to every transaction the
-/// store opens, and the default B-tree indexes created by [`Store::migrate`], which do not depend
-/// on any option. `with_generated_columns` and `with_without_rowid` affect only application SQL,
-/// and `with_index_method` enables alternative index methods rather than ordinary B-tree indexes.
+/// Turso engine capabilities that only affect application SQL, such as `ATTACH DATABASE`,
+/// `VACUUM`, generated columns, `WITHOUT ROWID`, and alternative index methods, are deliberately
+/// not exposed. Open your own Turso database or run the corresponding SQL if an application needs
+/// them. Engine flags that follow from the transaction behavior are enabled automatically:
+/// [`TransactionBehavior::Concurrent`] turns on MVCC passive checkpointing, and the other
+/// behaviors turn on multi-process WAL for file-backed local databases.
 #[derive(Clone, Default)]
 pub struct Options {
-    /// Enables Turso's experimental index-method support.
-    index_method: bool,
-    /// Enables opening the database from multiple processes.
-    multiprocess_wal: bool,
-    /// Enables the experimental `VACUUM` command.
-    vacuum: bool,
-    /// Enables `ATTACH DATABASE` and `DETACH DATABASE`.
-    attach: bool,
-    /// Enables generated columns.
-    generated_columns: bool,
-    /// Enables `WITHOUT ROWID` tables.
-    without_rowid: bool,
-    /// Enables the MVCC passive checkpoint option.
-    mvcc_passive_checkpoint: bool,
+    /// How long a connection waits for a contended database lock before returning an error.
+    busy_timeout: Option<Duration>,
     /// Transaction behavior applied to every connection opened by the store.
     transaction_behavior: Option<TransactionBehavior>,
     /// Enables local at-rest encryption and supplies its cipher and key.
@@ -97,7 +87,7 @@ pub struct Options {
 }
 
 impl Options {
-    /// Create options with every experimental feature disabled.
+    /// Create options with every optional setting disabled.
     ///
     /// Enable only the capabilities needed by the application by chaining the relevant `with_*`
     /// methods before passing the options to a store constructor.
@@ -105,84 +95,17 @@ impl Options {
         Self::default()
     }
 
-    /// Enable Turso's experimental index-method support for the opened database.
+    /// Set how long a connection waits for a contended database lock before returning `Busy`.
     ///
-    /// This allows application SQL to create indexes with a non-default method, such as
-    /// `CREATE INDEX ... USING toy_vector_sparse_ivf (...)`. It does not enable ordinary B-tree
-    /// indexes, which are always available; [`Store::migrate`] already creates B-tree indexes for
-    /// the crate's lookup columns. The crate's own queries do not use alternative index methods, so
-    /// this option only affects application-level SQL. Turso's full-text `fts` method is not
-    /// compiled into this crate's default dependency build. It must be enabled before opening the
-    /// database and only affects databases opened with the returned options.
-    pub fn with_index_method(mut self) -> Self {
-        self.index_method = true;
-        self
-    }
-
-    /// Enable multi-process access to the database through Turso's WAL coordinator.
+    /// The default is 5 seconds, matching the default used by `sqlx`'s SQLite driver. A longer
+    /// timeout lets a writer wait out a short-lived lock instead of failing immediately; a shorter
+    /// timeout returns control to the caller sooner. Pass [`Duration::ZERO`] to fail as soon as the
+    /// lock is contended rather than waiting.
     ///
-    /// Use this only when the same database file must be shared between operating-system
-    /// processes. It changes locking and coordination at the engine level; it does not change the
-    /// crate's schema or queries. Multiple [`Store`] clones in one process already share the same
-    /// database handle and do not need this option. It cannot be combined with
-    /// [`TransactionBehavior::Concurrent`], because Turso's MVCC mode does not support multi-process
-    /// access; that combination returns [`Error::ConflictingOptions`]. Disabled by default.
-    pub fn with_multiprocess_wal(mut self) -> Self {
-        self.multiprocess_wal = true;
-        self
-    }
-
-    /// Enable Turso's experimental `VACUUM` support for the opened database.
-    ///
-    /// Use it when application SQL needs to reclaim space after large deletions or migrations. It
-    /// makes the command available; it does not run vacuuming automatically, and the crate never
-    /// runs `VACUUM` itself. Query behavior is otherwise unchanged.
-    pub fn with_vacuum(mut self) -> Self {
-        self.vacuum = true;
-        self
-    }
-
-    /// Enable SQL `ATTACH DATABASE` and `DETACH DATABASE` statements.
-    ///
-    /// Use it for application SQL that reads or joins another SQLite-compatible file. It does not
-    /// change the crate's schema or queries; [`Store::migrate_to`] copies tables without
-    /// `ATTACH`. Disabled by default and applied only when the database is opened.
-    pub fn with_attach(mut self) -> Self {
-        self.attach = true;
-        self
-    }
-
-    /// Enable Turso's experimental generated-column support for SQL schemas.
-    ///
-    /// Use it for application tables that declare `GENERATED ALWAYS AS` columns. It does not alter
-    /// the crate's wallet schema, and the crate's `INSERT` and `SELECT` statements name columns
-    /// explicitly, so generated columns only affect application-level SQL.
-    pub fn with_generated_columns(mut self) -> Self {
-        self.generated_columns = true;
-        self
-    }
-
-    /// Enable `WITHOUT ROWID` table definitions in the opened database.
-    ///
-    /// Use it for application tables with composite primary keys that do not need an implicit
-    /// rowid. `WITHOUT ROWID` stores rows in primary-key order: primary-key lookups avoid a second
-    /// index, but there is no implicit rowid and `INTEGER PRIMARY KEY` no longer aliases one. The
-    /// crate's schema does not use `WITHOUT ROWID`, so its tables and queries are unchanged.
-    pub fn with_without_rowid(mut self) -> Self {
-        self.without_rowid = true;
-        self
-    }
-
-    /// Enable Turso's experimental passive-checkpoint behavior for MVCC databases.
-    ///
-    /// Use it for long-running MVCC workloads that need checkpointing to run alongside readers and
-    /// writers. The database must already be in MVCC journal mode; selecting
-    /// [`TransactionBehavior::Concurrent`] through [`Options::with_transaction_behavior`] enables
-    /// MVCC for local stores. This option only enables the behavior and does not start a
-    /// checkpoint. It is rejected by remote sync stores, and the crate's schema and queries are
-    /// unchanged.
-    pub fn with_mvcc_passive_checkpoint(mut self) -> Self {
-        self.mvcc_passive_checkpoint = true;
+    /// The timeout applies to every connection the store opens, including the local cache of a
+    /// remote sync store.
+    pub fn with_busy_timeout(mut self, timeout: Duration) -> Self {
+        self.busy_timeout = Some(timeout);
         self
     }
 
@@ -200,12 +123,12 @@ impl Options {
     ///   commit.
     ///
     /// Selecting `Concurrent` switches a local database to MVCC journal mode when the store is
-    /// opened. Turso rejects DDL inside `BEGIN CONCURRENT`, so [`Store::migrate`] and
-    /// [`Store::migrate_to`] still use a `Deferred` transaction for schema changes. `Concurrent` is
-    /// rejected by remote sync stores and cannot be combined with
-    /// [`Options::with_multiprocess_wal`] (MVCC does not support multi-process access); those
-    /// combinations return `Error::UnsupportedOption` or [`Error::ConflictingOptions`]
-    /// respectively. The crate's read and write queries otherwise run under the selected behavior.
+    /// opened and enables Turso's MVCC passive-checkpoint behavior. Turso rejects DDL inside
+    /// `BEGIN CONCURRENT`, so [`Store::migrate`] and [`Store::migrate_to`] still use a
+    /// `Deferred` transaction for schema changes. `Concurrent` is rejected by remote sync stores.
+    /// The other behaviors enable Turso's multi-process WAL coordinator for file-backed local
+    /// databases, so several operating-system processes can share the same database file. The
+    /// crate's read and write queries otherwise run under the selected behavior.
     pub fn with_transaction_behavior(mut self, behavior: TransactionBehavior) -> Self {
         self.transaction_behavior = Some(behavior);
         self
@@ -361,13 +284,10 @@ pub fn generate_encryption_opts() -> EncryptionOpts {
 impl fmt::Debug for Options {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Options")
-            .field("index_method", &self.index_method)
-            .field("multiprocess_wal", &self.multiprocess_wal)
-            .field("vacuum", &self.vacuum)
-            .field("attach", &self.attach)
-            .field("generated_columns", &self.generated_columns)
-            .field("without_rowid", &self.without_rowid)
-            .field("mvcc_passive_checkpoint", &self.mvcc_passive_checkpoint)
+            .field(
+                "busy_timeout",
+                &self.busy_timeout.unwrap_or(DEFAULT_BUSY_TIMEOUT),
+            )
             .field(
                 "transaction_behavior",
                 &match self.transaction_behavior {
@@ -483,16 +403,16 @@ impl fmt::Debug for Store {
 }
 
 impl Store {
-    /// Create an in-memory database with all experimental options disabled.
+    /// Create an in-memory database with default options.
     ///
     /// The database exists for the lifetime of the returned store and is not persisted to a file.
-    /// Use [`Store::new_memory_with_options`] when an in-memory database needs experimental
-    /// features.
+    /// Use [`Store::new_memory_with_options`] when an in-memory database needs non-default
+    /// options.
     pub async fn new_memory() -> Result<Self, Error> {
         Self::new_memory_with_options(Options::default()).await
     }
 
-    /// Create an in-memory database using the supplied experimental options.
+    /// Create an in-memory database using the supplied options.
     ///
     /// The options are applied while Turso opens the database. The database remains in memory for
     /// the lifetime of the store and is not persisted to disk.
@@ -502,7 +422,7 @@ impl Store {
 
     /// Create or open a local database using default options.
     ///
-    /// This constructor leaves all experimental options disabled. It does not create the BDK
+    /// This constructor uses the default options. It does not create the BDK
     /// schema; call [`Store::migrate`] before using the persistence methods, unless the store is
     /// initialized through `AsyncWalletPersister`.
     pub async fn new(path: &str) -> Result<Self, Error> {
@@ -511,33 +431,29 @@ impl Store {
 
     /// Create or open a local database with the supplied Turso options.
     ///
-    /// The options are applied only while opening the database. All experimental features remain
-    /// disabled unless explicitly enabled on `options`. This constructor does not run the BDK
+    /// The options are applied only while opening the database. Only the settings configured on
+    /// `options` are enabled. This constructor does not run the BDK
     /// schema migration; call [`Store::migrate`] before using the persistence methods.
     ///
     /// # Examples
     ///
     /// ```no_run
-    /// use bdk_turso::{Options, Store};
+    /// use bdk_turso::{Options, Store, TransactionBehavior};
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let options = Options::new().with_attach().with_generated_columns();
+    /// let options = Options::new().with_transaction_behavior(TransactionBehavior::Immediate);
     /// let store = Store::new_with_options("wallet.sqlite", options).await?;
     /// store.migrate().await?;
     /// # Ok(())
     /// # }
     /// ```
     pub async fn new_with_options(path: &str, options: Options) -> Result<Self, Error> {
-        if options.multiprocess_wal
-            && matches!(
-                options.transaction_behavior,
-                Some(TransactionBehavior::Concurrent)
-            )
-        {
-            return Err(Error::ConflictingOptions(
-                "`with_multiprocess_wal` cannot be combined with `TransactionBehavior::Concurrent`: Turso's MVCC mode does not support multi-process access".into(),
-            ));
-        }
+        let concurrent = matches!(
+            options.transaction_behavior,
+            Some(TransactionBehavior::Concurrent)
+        );
+        // Turso rejects multi-process WAL for in-memory databases and for MVCC.
+        let multiprocess_wal = !concurrent && path != ":memory:";
 
         #[cfg(feature = "remote")]
         if options.remote_encryption.is_some() {
@@ -555,13 +471,8 @@ impl Store {
         }
 
         let mut builder = Builder::new_local(path)
-            .experimental_index_method(options.index_method)
-            .experimental_multiprocess_wal(options.multiprocess_wal)
-            .experimental_vacuum(options.vacuum)
-            .experimental_attach(options.attach)
-            .experimental_generated_columns(options.generated_columns)
-            .experimental_without_rowid(options.without_rowid)
-            .experimental_mvcc_passive_checkpoint(options.mvcc_passive_checkpoint);
+            .experimental_multiprocess_wal(multiprocess_wal)
+            .experimental_mvcc_passive_checkpoint(concurrent);
 
         if let Some(encryption) = &options.encryption {
             builder = builder
@@ -570,10 +481,7 @@ impl Store {
         }
 
         let database = builder.build().await?;
-        if matches!(
-            options.transaction_behavior,
-            Some(TransactionBehavior::Concurrent)
-        ) {
+        if concurrent {
             enable_mvcc(&database).await?;
         }
         Ok(Self {
@@ -619,10 +527,9 @@ impl Store {
 
     /// Connect to Turso Cloud using a local cache and the supplied database options.
     ///
-    /// Local at-rest encryption and MVCC passive checkpointing are unsupported in sync mode and
-    /// return an error. Use [`Options::with_remote_encryption`] for Turso Cloud encryption; this
-    /// does not encrypt the local cache. The remaining experimental engine options are forwarded to
-    /// Turso's sync builder.
+    /// Local at-rest encryption is unsupported in sync mode and returns an error. Use
+    /// [`Options::with_remote_encryption`] for Turso Cloud encryption; this does not encrypt the
+    /// local cache. Multi-process WAL is enabled for the local sync cache.
     #[cfg(feature = "remote")]
     pub async fn new_remote_with_options(
         local_path: &str,
@@ -633,11 +540,6 @@ impl Store {
         if options.encryption.is_some() {
             return Err(Error::UnsupportedOption(
                 "local at-rest encryption is unsupported in remote sync mode; use `with_remote_encryption` for Turso Cloud encryption (the local cache remains unencrypted)".into(),
-            ));
-        }
-        if options.mvcc_passive_checkpoint {
-            return Err(Error::UnsupportedOption(
-                "MVCC passive checkpointing is not supported by Turso's remote sync builder".into(),
             ));
         }
         if matches!(
@@ -652,12 +554,7 @@ impl Store {
         let mut builder = turso::sync::Builder::new_remote(local_path)
             .with_remote_url(remote_url)
             .with_auth_token(auth_token)
-            .experimental_index_method(options.index_method)
-            .experimental_multiprocess_wal(options.multiprocess_wal)
-            .experimental_vacuum(options.vacuum)
-            .experimental_attach(options.attach)
-            .experimental_generated_columns(options.generated_columns)
-            .experimental_without_rowid(options.without_rowid);
+            .experimental_multiprocess_wal(true);
 
         if let Some(bootstrap_if_empty) = options.bootstrap_if_empty {
             builder = builder.bootstrap_if_empty(bootstrap_if_empty);
@@ -723,14 +620,22 @@ impl Store {
             .unwrap_or(TransactionBehavior::Deferred)
     }
 
+    fn configured_busy_timeout(&self) -> Duration {
+        self.options
+            .as_ref()
+            .and_then(|options| options.busy_timeout)
+            .unwrap_or(DEFAULT_BUSY_TIMEOUT)
+    }
+
     async fn connect_with_behavior(
         &self,
         transaction_behavior: TransactionBehavior,
     ) -> Result<Connection, Error> {
+        let busy_timeout = self.configured_busy_timeout();
         match &self.database {
             StoreDatabase::Local(database) => {
                 let mut connection = database.connect()?;
-                connection.busy_timeout(BUSY_TIMEOUT)?;
+                connection.busy_timeout(busy_timeout)?;
                 connection.set_transaction_behavior(transaction_behavior);
                 Ok(connection)
             }
@@ -738,7 +643,7 @@ impl Store {
             StoreDatabase::Remote(database) => {
                 database.pull().await?;
                 let mut connection = database.connect().await?;
-                connection.busy_timeout(BUSY_TIMEOUT)?;
+                connection.busy_timeout(busy_timeout)?;
                 connection.set_transaction_behavior(transaction_behavior);
                 Ok(connection)
             }
@@ -1476,13 +1381,7 @@ mod test {
     fn options_default_to_disabled() {
         let options = Options::new();
 
-        assert!(!options.index_method);
-        assert!(!options.multiprocess_wal);
-        assert!(!options.vacuum);
-        assert!(!options.attach);
-        assert!(!options.generated_columns);
-        assert!(!options.without_rowid);
-        assert!(!options.mvcc_passive_checkpoint);
+        assert!(options.busy_timeout.is_none());
         assert!(options.transaction_behavior.is_none());
         assert!(options.encryption.is_none());
         #[cfg(feature = "remote")]
@@ -1495,6 +1394,31 @@ mod test {
             assert!(options.partial_sync_opts.is_none());
             assert!(options.logical_mvcc_pull.is_none());
         }
+    }
+
+    #[test]
+    fn busy_timeout_records_the_configured_value() {
+        let default = Options::new();
+        assert_eq!(default.busy_timeout, None);
+
+        let configured = Options::new().with_busy_timeout(Duration::from_millis(250));
+        assert_eq!(configured.busy_timeout, Some(Duration::from_millis(250)));
+    }
+
+    #[tokio::test]
+    async fn store_defaults_to_a_five_second_busy_timeout() -> anyhow::Result<()> {
+        assert_eq!(DEFAULT_BUSY_TIMEOUT, Duration::from_secs(5));
+
+        let store = Store::new_memory().await?;
+        assert_eq!(store.configured_busy_timeout(), Duration::from_secs(5));
+
+        let store = Store::new_with_options(
+            ":memory:",
+            Options::new().with_busy_timeout(Duration::from_millis(250)),
+        )
+        .await?;
+        assert_eq!(store.configured_busy_timeout(), Duration::from_millis(250));
+        Ok(())
     }
 
     #[test]
@@ -1525,18 +1449,6 @@ mod test {
         .unwrap_err();
         assert!(
             matches!(error, Error::UnsupportedOption(message) if message.contains("local at-rest encryption"))
-        );
-
-        let error = Store::new_remote_with_options(
-            ":memory:",
-            "libsql://unused.turso.io",
-            "unused-token",
-            Options::new().with_mvcc_passive_checkpoint(),
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(error, Error::UnsupportedOption(message) if message.contains("MVCC passive checkpointing"))
         );
 
         let error = Store::new_remote_with_options(
@@ -1734,22 +1646,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn multiprocess_wal_conflicts_with_concurrent() -> anyhow::Result<()> {
-        let error = Store::new_memory_with_options(
-            Options::new()
-                .with_multiprocess_wal()
-                .with_transaction_behavior(TransactionBehavior::Concurrent),
-        )
-        .await
-        .unwrap_err();
-
-        assert!(
-            matches!(error, Error::ConflictingOptions(message) if message.contains("multiprocess"))
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn concurrent_transaction_behavior_enables_mvcc() -> anyhow::Result<()> {
         let store = Store::new_memory_with_options(
             Options::new().with_transaction_behavior(TransactionBehavior::Concurrent),
@@ -1834,42 +1730,6 @@ mod test {
                 "`{sql}` did not use `{index}`:\n{plan}"
             );
         }
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn index_method_option_enables_application_index_methods() -> anyhow::Result<()> {
-        let store = Store::new_memory_with_options(Options::new().with_index_method()).await?;
-        store.migrate().await?;
-        let conn = store.connect().await?;
-        conn.execute(
-            "CREATE TABLE vectors (id INTEGER PRIMARY KEY, embedding)",
-            (),
-        )
-        .await?;
-        conn.execute_batch(
-            "INSERT INTO vectors VALUES (1, vector32_sparse('[1, 0, 1]'));
-             INSERT INTO vectors VALUES (2, vector32_sparse('[2, 0, 1]'));
-             INSERT INTO vectors VALUES (3, vector32_sparse('[3, 0, 1]'));",
-        )
-        .await?;
-        conn.execute(
-            "CREATE INDEX vectors_idx ON vectors USING toy_vector_sparse_ivf (embedding)",
-            (),
-        )
-        .await?;
-
-        let mut rows = conn
-            .query(
-                "SELECT id FROM vectors ORDER BY vector_distance_jaccard(embedding, vector32_sparse('[3, 0, 1]')) LIMIT 1",
-                (),
-            )
-            .await?;
-        let row = rows
-            .next()
-            .await?
-            .expect("index method should return a row");
-        assert_eq!(row.get::<i64>(0)?, 3);
         Ok(())
     }
 
