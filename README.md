@@ -154,13 +154,16 @@ Local encryption is not supported for remote sync stores, and Turso Cloud encryp
 
 `Options` only exposes settings the crate acts on. Turso engine capabilities that affect only application SQL, such as `ATTACH DATABASE`, `VACUUM`, generated columns, `WITHOUT ROWID`, and alternative index methods, are not exposed. Open your own Turso database or run the corresponding SQL if an application needs them.
 
-| Builder | What it changes | When to use it |
-| --- | --- | --- |
-| `with_transaction_behavior` | The `BEGIN` mode for every transaction: `Deferred`, `Immediate`, `Exclusive`, or `Concurrent` | Tuning locking and write contention; `Concurrent` allows parallel writers |
+`with_transaction_behavior` selects the `BEGIN` mode for every transaction the store opens:
 
-The four transaction behaviors are mutually exclusive because Turso stores one behavior per connection. Calling `with_transaction_behavior` again replaces the previous value; the last call wins.
+| Behavior | What it changes | When to use it | Engine flags |
+| --- | --- | --- | --- |
+| `Deferred` (default) | Starts the transaction on first read or write | General use; avoids taking a write lock until a statement needs it | Multi-process WAL for file-backed local databases |
+| `Immediate` | Acquires the write lock at `BEGIN` | Writes that should fail fast on contention instead of partway through | Multi-process WAL for file-backed local databases |
+| `Exclusive` | Prevents other connections from reading while the transaction is open | Short operations that must block other readers | Multi-process WAL for file-backed local databases |
+| `Concurrent` | Allows parallel writers with conflicts detected at commit; switches local databases to MVCC journal mode | Multi-writer workloads on local stores | MVCC passive checkpointing |
 
-Engine flags follow the selected behavior. `Concurrent` switches local databases to MVCC journal mode and enables Turso's MVCC passive-checkpoint behavior. `Deferred`, `Immediate`, and `Exclusive` enable Turso's multi-process WAL coordinator for file-backed local databases, so several operating-system processes can share the same database file.
+The four behaviors are mutually exclusive because Turso stores one behavior per connection. Calling `with_transaction_behavior` again replaces the previous value; the last call wins. `Concurrent` is rejected by remote sync stores, which always use multi-process WAL for the local cache. The engine flags in the last column are enabled automatically; they are not separate builders.
 
 ```rust,no_run
 use bdk_turso::{Options, Store, TransactionBehavior};
