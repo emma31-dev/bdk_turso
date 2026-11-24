@@ -26,6 +26,10 @@ jobs:
       - run: cargo test --all-targets --all-features --locked
       - run: cargo check --no-default-features --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
       - name: Check tag matches Cargo.toml
         run: |
           tag="${GITHUB_REF_NAME#v}"
