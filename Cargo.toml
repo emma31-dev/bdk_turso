@@ -1,6 +1,6 @@
 [package]
 name = "bdk_turso"
-version = "0.3.2"
+version = "0.4.0"
 authors = ["Emmanuel Fidelis"]
 rust-version = "1.88.0"
 edition = "2024"
@@ -16,24 +16,26 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-bdk_chain = { version = "0.23.3", features = ["miniscript"] }
-bdk_wallet = { version = "3.0.0", optional = true }
+bdk_chain = { version = "0.23.4", features = ["miniscript"] }
+bdk_wallet = { version = "3.2.1", optional = true }
 turso = { version = "0.8.3", default-features = false, features = ["pure-rust-crypto"] }
-rand = "0.9"
+rand = "0.10"
 tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
-# Use branches' std implementation instead of the incompatible nightly intrinsic path in Turso's dependency graph.
+# Keep this in sync with Turso's `branches ^0.4.3` requirement. A direct dependency on the same
+# version unifies the `std` feature and avoids the incompatible nightly intrinsic path in Turso's
+# dependency graph; bumping to 0.5 would create a second copy and lose that workaround.
 branches = { version = "0.4.6", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 anyhow = "1"
-bdk_wallet = { version = "3.0.0", features = ["test-utils"] }
+bdk_wallet = { version = "3.2.1", features = ["test-utils"] }
 bdk_bitcoind_rpc = "0.22.1"
 bdk_sqlite = "0.6.0"
 bdk_redb = "0.2.0"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
-toml = "0.8"
+toml = "1"
 
 [features]
 default = ["wallet"]
