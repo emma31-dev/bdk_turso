@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "bdk_turso"
-version = "0.4.0"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "bdk_bitcoind_rpc",
