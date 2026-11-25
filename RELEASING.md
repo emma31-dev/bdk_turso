@@ -54,8 +54,8 @@ gh secret set CARGO_REGISTRY_TOKEN
 7. **Tag the release** from the commit that passed CI:
 
    ```sh
-   git tag -a v0.4.0 -m "bdk_turso 0.4.0"
-   git push origin v0.4.0
+   git tag -a v0.3.2 -m "bdk_turso 0.3.2"
+   git push origin v0.3.2
    ```
 
 8. **Approve the workflow** if the `crates-io` environment requires reviewers. The `Publish` workflow then:
@@ -77,11 +77,11 @@ gh secret set CARGO_REGISTRY_TOKEN
 - **After crates.io accepts the upload:** never reuse the version. Publish a new patch release with the fix. If the published version is unusable, yank it:
 
   ```sh
-  cargo yank --version 0.4.0
+  cargo yank --version 0.3.2
   ```
 
   Yanking prevents new dependency resolution from selecting the version but does not delete it.
-- **If the GitHub release fails after publishing:** create it manually with `gh release create v0.4.0 --title "bdk_turso 0.4.0" --notes-file release-notes.md`, using the changelog section for the notes.
+- **If the GitHub release fails after publishing:** create it manually with `gh release create v0.3.2 --title "bdk_turso 0.3.2" --notes-file release-notes.md`, using the changelog section for the notes.
 - **If docs.rs fails:** fix the docs build in a new patch release, or trigger a rebuild from the docs.rs build page after correcting the source.
 
 ## Release cadence

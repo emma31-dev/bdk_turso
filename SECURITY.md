@@ -47,7 +47,7 @@ An advisory is closed only when no known reachable vulnerability remains in the 
 
 ## Audit baseline (2026-11-25)
 
-The 0.4.0 dependency refresh moved `time` from 0.3.45 to 0.3.55, resolving RUSTSEC-2026-0009 (`CVE-2026-25727`, `GHSA-r6v5-fh4h-64xc`). The full resolved graph was then checked against the RustSec advisory database. Two findings remain, each with a documented disposition in `deny.toml`:
+The current dependency refresh moved `time` from 0.3.45 to 0.3.55, resolving RUSTSEC-2026-0009 (`CVE-2026-25727`, `GHSA-r6v5-fh4h-64xc`). The full resolved graph was then checked against the RustSec advisory database. Two findings remain, each with a documented disposition in `deny.toml`:
 
 | Advisory | Crate | Disposition |
 | --- | --- | --- |

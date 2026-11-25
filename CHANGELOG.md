@@ -4,23 +4,21 @@ Notable changes to `bdk_turso` are documented here. Released versions are linked
 
 ## [Unreleased]
 
-## [0.4.0](https://crates.io/crates/bdk_turso/0.4.0) - 2026-11-25
-
 ### Added
 
-- `Options::with_busy_timeout` sets how long a connection waits for a contended database lock before returning `Busy`. The default remains five seconds, and `Duration::ZERO` fails immediately on contention.
-- CI now runs `cargo-deny` for RustSec advisories, licenses, dependency bans, and registry sources. [SECURITY.md](SECURITY.md) documents vulnerability reporting, triage, time-limited exceptions, and Turso upgrade tracking, and [RELEASING.md](RELEASING.md) requires the audit before each release.
+- **Configurable lock wait.** `Options::with_busy_timeout` sets how long a connection waits for a busy database before returning an error. The default remains 5 seconds, and `Duration::ZERO` fails immediately when the database is locked.
+- **Dependency security checks.** Every pull request and release now checks dependencies for known vulnerabilities, disallowed licenses, and untrusted sources. `SECURITY.md` explains how to report a vulnerability and how findings are handled.
 
 ### Changed
 
-- **Breaking:** `Options` now exposes only the transaction behavior, local encryption, and remote sync settings. Removed the pass-through engine builders `with_index_method`, `with_vacuum`, `with_attach`, `with_generated_columns`, and `with_without_rowid`, which only affected application SQL, and the engine-tuning builders `with_multiprocess_wal` and `with_mvcc_passive_checkpoint`. The crate now enables the matching Turso engine flags from the transaction behavior: `Concurrent` enables MVCC passive checkpointing, and the other behaviors enable multi-process WAL.
-- **Breaking:** Removed the `Error::ConflictingOptions` variant, which only reported combinations of the removed builders.
-- Refreshed direct dependencies to their latest stable releases: `bdk_chain` 0.23.4, `bdk_wallet` 3.2.1, `rand` 0.10, the dev-only `toml` 1.x, and Turso 0.8.4. `branches` stays at 0.4.6 because Turso requires `^0.4.3`, and a direct dependency on the same version unifies the `std` feature to avoid the nightly-intrinsic path. `rand` is still used only for encryption key generation and `toml` only by the example config loader, so neither changes the public API. The MSRV remains Rust 1.88.0.
+- **Breaking: smaller `Options`.** Removed the builders that changed raw Turso behavior instead of how `bdk_turso` stores wallet data: `with_index_method`, `with_vacuum`, `with_attach`, `with_generated_columns`, `with_without_rowid`, `with_multiprocess_wal`, and `with_mvcc_passive_checkpoint`. If an application needs those Turso capabilities, open the database directly or run the corresponding SQL. Transaction behavior now enables the required engine flags automatically.
+- **Breaking:** Removed `Error::ConflictingOptions`, which only reported combinations of the removed builders.
+- **Dependency refresh.** Updated `bdk_wallet`, `bdk_chain`, `rand`, `toml`, and Turso to their latest stable releases. These updates do not change the public API, and the MSRV remains Rust 1.88.0.
 
 ### Security
 
-- `time` now resolves to 0.3.55, fixing RUSTSEC-2026-0009 (`CVE-2026-25727`, `GHSA-r6v5-fh4h-64xc`), a stack-exhaustion denial of service when parsing RFC 2822 timestamps.
-- `cargo deny check` gates pull requests, `main`, and release verification. New advisories, unreviewed licenses, wildcard dependencies, and unknown registry or git sources fail the build unless `deny.toml` carries a documented exception with an expiry date.
+- **`time` vulnerability fixed.** `time` now resolves to 0.3.55, closing RUSTSEC-2026-0009 (`CVE-2026-25727`), a denial-of-service when parsing RFC 2822 timestamps.
+- **Dependency gate.** `cargo deny check` now runs in CI and release verification. New advisories, unreviewed licenses, wildcard dependencies, and unknown sources fail the build unless `deny.toml` records an exception with an expiry date.
 
 ## [0.3.2](https://crates.io/crates/bdk_turso/0.3.2) - 2026-11-16
 
