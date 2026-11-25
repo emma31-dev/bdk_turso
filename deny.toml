@@ -13,7 +13,6 @@ unmaintained = "all"
 unsound = "all"
 unused-ignored-advisory = "deny"
 ignore = [
-    { id = "RUSTSEC-2023-0071", reason = "rsa is reachable only through sqlx-mysql, a dev-dependency of bdk_sqlite used by benchmarks and tests. The published bdk_turso crate does not link rsa or perform RSA operations.", expiry = "2027-02-28" },
     { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys is reachable only through the bdk_sqlite dev-dependency. The published bdk_turso crate uses Turso, not bundled or system SQLite.", expiry = "2027-02-28" },
     { id = "RUSTSEC-2026-0543", reason = "chrono is a transitive Turso dependency with no maintained replacement under bdk_turso's control. bdk_turso does not pass attacker-controlled RFC 3339 input through chrono. Re-evaluate on the next Turso upgrade.", expiry = "2027-02-28" },
 ]

@@ -47,13 +47,14 @@ An advisory is closed only when no known reachable vulnerability remains in the 
 
 ## Audit baseline (2026-11-25)
 
-The 0.4.0 dependency refresh moved `time` from 0.3.45 to 0.3.55, resolving RUSTSEC-2026-0009 (`CVE-2026-25727`, `GHSA-r6v5-fh4h-64xc`). The full locked graph was then checked against the RustSec advisory database. Three findings remain, each with a documented disposition in `deny.toml`:
+The 0.4.0 dependency refresh moved `time` from 0.3.45 to 0.3.55, resolving RUSTSEC-2026-0009 (`CVE-2026-25727`, `GHSA-r6v5-fh4h-64xc`). The full resolved graph was then checked against the RustSec advisory database. Two findings remain, each with a documented disposition in `deny.toml`:
 
 | Advisory | Crate | Disposition |
 | --- | --- | --- |
-| RUSTSEC-2023-0071 | `rsa` 0.9.10 | Not shipped. Reachable only through `sqlx-mysql`, a dev-dependency of `bdk_sqlite` used by benchmarks and tests. `bdk_turso` does not link `rsa` or perform RSA operations. Exception expires 2027-02-28. |
 | RUSTSEC-2026-0459 | `libsqlite3-sys` 0.30.1 | Not shipped. Reachable only through the `bdk_sqlite` dev-dependency. The published crate uses Turso, not bundled or system SQLite. Exception expires 2027-02-28. |
 | RUSTSEC-2026-0543 | `chrono` 0.4.45 | Unmaintained transitive dependency of Turso. `bdk_turso` has no replacement it can apply directly and does not pass attacker-controlled RFC 3339 input through `chrono`. Re-evaluate on the next Turso upgrade; exception expires 2027-02-28. |
+
+`rsa` 0.9.10 also appears in `Cargo.lock` through an unused `sqlx-mysql` path, but it is not part of the resolved build graph or the published crate, so it is not a gate exception.
 
 No yanked releases, unknown registries, or git sources were present at this baseline. Re-run the audit when any dependency is upgraded, and remove an exception as soon as the underlying finding no longer appears.
 
