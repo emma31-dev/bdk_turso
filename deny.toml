@@ -1,0 +1,48 @@
+# Supply-chain policy for bdk_turso. See SECURITY.md for the triage process.
+#
+# Run locally with `cargo deny check`. CI and release verification run the same
+# command with all features enabled.
+
+[graph]
+all-features = true
+
+[advisories]
+# Every vulnerability, unsoundness, and unmaintained-crate advisory must be
+# fixed or explicitly triaged below.
+unmaintained = "all"
+unsound = "all"
+unused-ignored-advisory = "deny"
+ignore = [
+    { id = "RUSTSEC-2026-0459", reason = "libsqlite3-sys is reachable only through the bdk_sqlite dev-dependency. The published bdk_turso crate uses Turso, not bundled or system SQLite.", expiry = "2027-02-28" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is a transitive Turso dependency with no maintained replacement under bdk_turso's control. bdk_turso does not pass attacker-controlled RFC 3339 input through chrono. Re-evaluate on the next Turso upgrade.", expiry = "2027-02-28" },
+]
+
+[licenses]
+confidence-threshold = 0.9
+# Report an allow-list entry that no crate uses instead of silently carrying it
+# forward. Remove unused licenses during dependency reviews.
+unused-allowed-license = "deny"
+allow = [
+    "MIT",
+    "MITNFA",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "Unlicense",
+    "BSL-1.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

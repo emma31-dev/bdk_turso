@@ -290,6 +290,10 @@ cp examples/example.toml examples/config.toml
 
 The MSRV is 1.88.0, based on the current resolved dependency graph.
 
+## Security
+
+Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/emma31-dev/bdk_turso/security/advisories/new); do not open a public issue. See [SECURITY.md](SECURITY.md) for the response process, dependency and supply-chain policy, and how advisories and time-limited exceptions are triaged. CI runs `cargo-deny` so a new advisory or unreviewed license fails the build.
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache License, Version 2.0](LICENSE-APACHE), at your option.
