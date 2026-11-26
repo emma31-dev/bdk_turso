@@ -32,6 +32,21 @@ type TableColumn = (String, String, i64, Value, i64);
 /// can be overridden with [`Options::with_busy_timeout`].
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Tables whose rows are deleted by [`Store::wipe`]. Feature-gated tables are still cleared when
+/// they exist in the database, even if the current build does not create them.
+const MANAGED_TABLES: &[&str] = &[
+    "anchor",
+    "block",
+    "keychain",
+    "keychain_last_revealed",
+    "keychain_script_pubkey",
+    "locked_outpoint",
+    "network",
+    "psbt",
+    "tx",
+    "txout",
+];
+
 /// Switch a local database to MVCC journal mode.
 ///
 /// `BEGIN CONCURRENT` is only accepted when MVCC is enabled. The setting is persisted in the
@@ -777,6 +792,41 @@ impl Store {
         Ok(())
     }
 
+    /// Delete all rows from the tables managed by this crate.
+    ///
+    /// Every table created by [`Store::migrate`] is cleared when it exists: `block`, `tx`,
+    /// `txout`, `anchor`, `keychain`, `keychain_last_revealed`, `keychain_script_pubkey`,
+    /// `network`, `locked_outpoint`, and `psbt`. Features are discovered from the database, so a
+    /// table created by an earlier build with the `wallet` or `psbt` feature enabled is cleared
+    /// even when the current build does not create it.
+    ///
+    /// All deletes run in one transaction. A failure before the commit leaves the previous data
+    /// intact. The schema, indexes, connection, and options are unchanged, so the store can be
+    /// used immediately after a successful wipe. Wiping a store that has not been migrated is a
+    /// no-op.
+    ///
+    /// This is a logical wipe, not a secure erase. SQLite and Turso may retain old bytes in WAL
+    /// files, free pages, filesystem snapshots, or SSD wear-leveling. Destroy the encryption key
+    /// or securely erase the database files when cryptographic erasure is required.
+    ///
+    /// Remote stores pull before wiping, commit locally, and then push the deletion to Turso
+    /// Cloud. If the upload fails, the local cache is already wiped and the returned
+    /// [`Error::RemotePush`] can be retried with [`Store::push`].
+    pub async fn wipe(&self) -> Result<(), Error> {
+        let mut conn = self
+            .connect_with_behavior(TransactionBehavior::Deferred)
+            .await?;
+        let txn = conn.transaction().await?;
+        for table in Self::existing_managed_tables(&txn).await? {
+            txn.execute(format!("DELETE FROM {}", Self::quote_identifier(table)), ())
+                .await?;
+        }
+        txn.commit().await?;
+        drop(conn);
+        self.push().await?;
+        Ok(())
+    }
+
     /// Copy tables, indexes, and rows present in this store to `destination` without running schema
     /// migrations.
     ///
@@ -931,6 +981,25 @@ impl Store {
             tables.push((row.get(0)?, row.get(1)?));
         }
         Ok(tables)
+    }
+
+    /// Return the managed tables that exist in the database, in a stable order.
+    async fn existing_managed_tables(conn: &Connection) -> Result<Vec<&'static str>, Error> {
+        let mut rows = conn
+            .query(
+                "SELECT lower(name) FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL",
+                (),
+            )
+            .await?;
+        let mut present = std::collections::HashSet::new();
+        while let Some(row) = rows.next().await? {
+            present.insert(row.get::<String>(0)?);
+        }
+        Ok(MANAGED_TABLES
+            .iter()
+            .copied()
+            .filter(|table| present.contains(*table))
+            .collect())
     }
 
     async fn user_indexes(conn: &Connection) -> Result<Vec<(String, String, String)>, Error> {
@@ -1615,6 +1684,101 @@ mod test {
             index_names(&source).await?,
             index_names(&destination).await?
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wipe_clears_managed_tables_created_by_other_builds() -> anyhow::Result<()> {
+        let store = Store::new_memory().await?;
+        let conn = store.connect().await?;
+        conn.execute_batch(
+            "CREATE TABLE block (height INTEGER PRIMARY KEY NOT NULL, hash TEXT NOT NULL);
+             CREATE TABLE tx (txid TEXT NOT NULL PRIMARY KEY);
+             CREATE TABLE txout (
+                 txid TEXT NOT NULL,
+                 vout INTEGER NOT NULL,
+                 PRIMARY KEY (txid, vout)
+             );
+             CREATE TABLE anchor (
+                 block_height INTEGER NOT NULL,
+                 block_hash TEXT NOT NULL,
+                 txid TEXT NOT NULL,
+                 confirmation_time INTEGER NOT NULL,
+                 PRIMARY KEY (block_height, block_hash, txid)
+             );
+             CREATE TABLE keychain (keychain INTEGER NOT NULL PRIMARY KEY, descriptor TEXT NOT NULL);
+             CREATE TABLE keychain_last_revealed (
+                 descriptor_id TEXT NOT NULL PRIMARY KEY,
+                 last_revealed INTEGER
+             );
+             CREATE TABLE keychain_script_pubkey (
+                 descriptor_id TEXT NOT NULL,
+                 derivation_index INTEGER,
+                 script BLOB,
+                 PRIMARY KEY (descriptor_id, derivation_index)
+             );
+             CREATE TABLE network (
+                 id INTEGER NOT NULL DEFAULT 0 CHECK (id = 0),
+                 network TEXT NOT NULL,
+                 PRIMARY KEY (id)
+             );
+             CREATE TABLE locked_outpoint (
+                 txid TEXT NOT NULL,
+                 vout INTEGER NOT NULL,
+                 PRIMARY KEY (txid, vout)
+             );
+             CREATE TABLE psbt (unsigned_txid TEXT NOT NULL PRIMARY KEY, data BLOB NOT NULL);
+             INSERT INTO block VALUES (1, 'hash');
+             INSERT INTO tx (txid) VALUES ('tx');
+             INSERT INTO txout (txid, vout) VALUES ('tx', 0);
+             INSERT INTO anchor (block_height, block_hash, txid, confirmation_time)
+                 VALUES (1, 'hash', 'tx', 0);
+             INSERT INTO keychain VALUES (0, 'descriptor');
+             INSERT INTO keychain_last_revealed VALUES ('descriptor', 0);
+             INSERT INTO keychain_script_pubkey (descriptor_id, derivation_index, script)
+                 VALUES ('descriptor', 0, x'00');
+             INSERT INTO network (id, network) VALUES (0, 'signet');
+             INSERT INTO locked_outpoint VALUES ('tx', 0);
+             INSERT INTO psbt VALUES ('txid', x'00');",
+        )
+        .await?;
+        drop(conn);
+
+        store.wipe().await?;
+
+        let conn = store.connect().await?;
+        for table in MANAGED_TABLES {
+            let mut rows = conn
+                .query(
+                    format!("SELECT COUNT(*) FROM {}", Store::quote_identifier(table)),
+                    (),
+                )
+                .await?;
+            let row = rows.next().await?.expect("COUNT returns one row");
+            assert_eq!(row.get::<i64>(0)?, 0, "table `{table}` was not wiped");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wipe_leaves_unmanaged_tables_untouched() -> anyhow::Result<()> {
+        let store = Store::new_memory().await?;
+        let conn = store.connect().await?;
+        conn.execute_batch(
+            "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO app_settings VALUES ('theme', 'dark');
+             CREATE TABLE block (height INTEGER PRIMARY KEY NOT NULL, hash TEXT NOT NULL);
+             INSERT INTO block VALUES (1, 'hash');",
+        )
+        .await?;
+        drop(conn);
+
+        store.wipe().await?;
+
+        let conn = store.connect().await?;
+        let mut rows = conn.query("SELECT COUNT(*) FROM app_settings", ()).await?;
+        let row = rows.next().await?.expect("COUNT returns one row");
+        assert_eq!(row.get::<i64>(0)?, 1, "unmanaged rows were deleted");
         Ok(())
     }
 

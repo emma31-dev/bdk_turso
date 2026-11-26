@@ -261,6 +261,18 @@ This lets an unsigned PSBT survive a restart, be signed later, and be written ba
 
 `bdk_turso` uses last-write-wins behavior for keyed persistence writes: when an incoming write targets an existing key, its value replaces the stored value rather than being ignored. This applies to component and wallet changeset writes, including a replacement block hash at the same height, and to PSBT writes. Explicit deletion entries remove their rows. This is storage-level behavior, not semantic validation of which value is newer or correct; ordering between independent remote clients follows Turso's sync behavior.
 
+## Wiping stored data
+
+`Store::wipe()` deletes every row that `bdk_turso` manages without dropping the schema or closing the connection. It clears `block`, `tx`, `txout`, `anchor`, the wallet tables, and `psbt` when those tables exist, including feature-gated tables created by an earlier build with more features enabled. Wiping a store that has not been migrated is a no-op.
+
+All deletes run in one transaction, so the previous data remains if the wipe fails before it commits. The schema, indexes, options, and encryption settings are kept, and the store can be used immediately afterwards. On a remote store, `wipe()` pulls first, clears the local cache, then pushes the deletion to Turso Cloud; if the upload fails it returns `Error::RemotePush`, and `Store::push()` retries it.
+
+`wipe()` is a logical delete, not a secure erase. SQLite and Turso may retain old bytes in WAL files, free pages, filesystem snapshots, or SSD wear-leveling. Destroy the encryption key or securely erase the database files if cryptographic erasure is required.
+
+```rust,ignore
+store.wipe().await?;
+```
+
 ## Benchmarks
 
 The repository includes a reproducible benchmark suite in [`benches/backends.rs`](benches/backends.rs) that runs the same generated wallet changesets through `bdk_turso`, `bdk_sqlite`, and `bdk_redb`. It measures changeset read and write speed, concurrent writes at several writer counts, opening an existing database, and on-disk storage size. Run it with:
