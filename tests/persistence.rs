@@ -192,6 +192,83 @@ async fn remote_store_syncs_changesets_between_local_caches() -> anyhow::Result<
     Ok(())
 }
 
+#[cfg(feature = "remote")]
+#[tokio::test]
+#[ignore = "requires a disposable Turso sync endpoint and credentials"]
+async fn remote_store_wipe_propagates_to_other_caches() -> anyhow::Result<()> {
+    let remote_url = std::env::var("BDK_TURSO_REMOTE_URL")?;
+    let auth_token = std::env::var("BDK_TURSO_AUTH_TOKEN")?;
+    let expected = full_changeset(43);
+
+    let first_dir = tempfile::tempdir()?;
+    let first_path = first_dir.path().join("first-cache.db");
+    let first_path = first_path.to_str().expect("temporary path is valid UTF-8");
+    let first = Store::new_remote(first_path, &remote_url, &auth_token).await?;
+    first.migrate().await?;
+
+    let second_dir = tempfile::tempdir()?;
+    let second_path = second_dir.path().join("second-cache.db");
+    let second_path = second_path.to_str().expect("temporary path is valid UTF-8");
+    let second = Store::new_remote(second_path, &remote_url, &auth_token).await?;
+
+    first.write_changeset(&expected).await?;
+    assert!(second.pull().await?);
+    assert_eq!(second.read_changeset().await?, expected);
+
+    first.wipe().await?;
+    assert_eq!(first.read_changeset().await?, ChangeSet::default());
+
+    assert!(second.pull().await?, "pull should apply the remote wipe");
+    assert_eq!(second.read_changeset().await?, ChangeSet::default());
+
+    drop(first);
+    drop(second);
+    Ok(())
+}
+
+#[tokio::test]
+async fn wipe_clears_populated_store_and_store_remains_usable() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    store.migrate().await?;
+    let first = full_changeset(41);
+    store.write_changeset(&first).await?;
+    assert_eq!(store.read_changeset().await?, first);
+
+    store.wipe().await?;
+    assert_eq!(store.read_changeset().await?, ChangeSet::default());
+
+    // The schema, indexes, and connection are unchanged, so writes can resume immediately.
+    store.migrate().await?;
+    let second = full_changeset(42);
+    store.write_changeset(&second).await?;
+    assert_eq!(store.read_changeset().await?, second);
+    Ok(())
+}
+
+#[tokio::test]
+async fn wipe_before_migrate_is_a_noop() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+
+    store.wipe().await?;
+    store.migrate().await?;
+    assert_eq!(store.read_changeset().await?, ChangeSet::default());
+    Ok(())
+}
+
+#[cfg(feature = "psbt")]
+#[tokio::test]
+async fn wipe_clears_psbt_rows() -> anyhow::Result<()> {
+    let store = Store::new_memory_with_options(encrypted_options()).await?;
+    store.migrate().await?;
+    let psbt = bdk_wallet::bitcoin::Psbt::from_unsigned_tx((*transaction(44)).clone())?;
+    let txid = store.write_psbt(&psbt).await?;
+    assert_eq!(store.read_psbt(txid).await?, Some(psbt));
+
+    store.wipe().await?;
+    assert_eq!(store.read_psbt(txid).await?, None);
+    Ok(())
+}
+
 fn descriptors() -> (
     Descriptor<DescriptorPublicKey>,
     Descriptor<DescriptorPublicKey>,

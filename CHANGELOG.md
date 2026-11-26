@@ -6,6 +6,7 @@ Notable changes to `bdk_turso` are documented here. Released versions are linked
 
 ### Added
 
+- **Atomic store wipe.** `Store::wipe()` deletes all rows from the tables managed by the crate in one transaction, including feature-gated tables that exist in the database. It works for local and remote stores, keeps the schema and options usable, and succeeds as a no-op on an unmigrated store. The documentation notes that this is a logical wipe, not a secure erase.
 - **Configurable lock wait.** `Options::with_busy_timeout` sets how long a connection waits for a busy database before returning an error. The default remains 5 seconds, and `Duration::ZERO` fails immediately when the database is locked.
 - **Dependency security checks.** Every pull request and release now checks dependencies for known vulnerabilities, disallowed licenses, and untrusted sources. `SECURITY.md` explains how to report a vulnerability and how findings are handled.
 
