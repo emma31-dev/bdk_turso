@@ -246,6 +246,57 @@ async fn wipe_clears_populated_store_and_store_remains_usable() -> anyhow::Resul
 }
 
 #[tokio::test]
+async fn wipe_clears_multiple_written_changesets() -> anyhow::Result<()> {
+    let store = Store::new_memory().await?;
+    store.migrate().await?;
+
+    let mut expected = ChangeSet::default();
+    for changeset in [
+        full_changeset(45),
+        ChangeSet {
+            tx_graph: graph_changeset(46),
+            ..ChangeSet::default()
+        },
+        ChangeSet {
+            tx_graph: graph_changeset(47),
+            ..ChangeSet::default()
+        },
+    ] {
+        store.write_changeset(&changeset).await?;
+        expected.merge(changeset);
+        assert_eq!(store.read_changeset().await?, expected);
+    }
+
+    store.wipe().await?;
+    assert_eq!(store.read_changeset().await?, ChangeSet::default());
+    Ok(())
+}
+
+#[tokio::test]
+async fn store_accepts_new_changesets_after_wipe() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("wipe-reuse.db");
+    let path = path.to_str().expect("temporary path is valid UTF-8");
+
+    let store = Store::new(path).await?;
+    store.migrate().await?;
+    store.write_changeset(&full_changeset(48)).await?;
+
+    store.wipe().await?;
+    assert_eq!(store.read_changeset().await?, ChangeSet::default());
+
+    let replacement = full_changeset(49);
+    store.write_changeset(&replacement).await?;
+    assert_eq!(store.read_changeset().await?, replacement);
+    drop(store);
+
+    let reopened = Store::new(path).await?;
+    reopened.migrate().await?;
+    assert_eq!(reopened.read_changeset().await?, replacement);
+    Ok(())
+}
+
+#[tokio::test]
 async fn wipe_before_migrate_is_a_noop() -> anyhow::Result<()> {
     let store = Store::new_memory().await?;
 
